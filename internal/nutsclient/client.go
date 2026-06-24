@@ -69,11 +69,11 @@ type issueVCRequest struct {
 	Format string `json:"format,omitempty"`
 }
 
-// IssueVC mints a verifiable credential via the Nuts node, mapping the neutral
+// Mint mints a verifiable credential via the Nuts node, mapping the neutral
 // domain credential to the node's API. The returned json.RawMessage is the
 // credential exactly as the node produced it (a JSON string holding a JWT for
 // format "jwt_vc"), ready to embed in an OpenID4VCI credential response.
-func (c *Client) IssueVC(ctx context.Context, cred credentials.Credential) (json.RawMessage, error) {
+func (c *Client) Mint(ctx context.Context, cred credentials.Credential) (json.RawMessage, error) {
 	body := issueVCRequest{
 		Context:           cred.Context,
 		Type:              cred.Type,

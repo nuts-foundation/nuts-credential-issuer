@@ -21,16 +21,14 @@ type Config struct {
 	ConfigID string
 	// CredentialValidity is how long an issued credential is valid for.
 	CredentialValidity time.Duration
-	// AccessTokenTTL is reported as expires_in on the token response.
-	AccessTokenTTL time.Duration
 }
 
-// Service orchestrates the issuance use-cases over the domain and the ports.
+// Service orchestrates the issuance use-cases over the domain and the ports. It
+// is stateless: the inbound adapter owns the in-flight sessions and passes the
+// issuance aggregate into each step.
 type Service struct {
-	store    Store
 	minter   Minter
 	subjects SubjectResolver
-	proofs   ProofVerifier
 	now      func() time.Time
 	cfg      Config
 
@@ -39,33 +37,27 @@ type Service struct {
 }
 
 // NewService constructs the application service.
-func NewService(store Store, minter Minter, subjects SubjectResolver, proofs ProofVerifier, now func() time.Time, cfg Config) *Service {
+func NewService(minter Minter, subjects SubjectResolver, now func() time.Time, cfg Config) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{store: store, minter: minter, subjects: subjects, proofs: proofs, now: now, cfg: cfg}
+	return &Service{minter: minter, subjects: subjects, now: now, cfg: cfg}
 }
 
 // CredentialType returns the credential configuration id this issuer offers.
 func (s *Service) CredentialType() string { return s.cfg.ConfigID }
 
-// StartAuthorization validates the request, creates an issuance and returns its
-// id (used to tie authentication back to the flow).
-func (s *Service) StartAuthorization(p AuthorizeParams) (string, error) {
+// Start validates the request and creates a new issuance aggregate.
+func (s *Service) Start(p StartParams) (*issuance.Issuance, error) {
 	configID, err := s.resolveConfigID(p.RequestedConfigID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	id := randID()
-	s.store.Create(issuance.New(issuance.Params{
-		ID:            id,
-		RedirectURI:   p.RedirectURI,
-		OAuthState:    p.OAuthState,
-		CodeChallenge: p.CodeChallenge,
-		ConfigID:      configID,
-		Recipient:     p.Recipient,
-	}, s.now()))
-	return id, nil
+	return issuance.New(issuance.Params{
+		ID:        randID(),
+		ConfigID:  configID,
+		Recipient: p.Recipient,
+	}, s.now()), nil
 }
 
 func (s *Service) resolveConfigID(requested string) (string, error) {
@@ -75,93 +67,42 @@ func (s *Service) resolveConfigID(requested string) (string, error) {
 	return "", fmt.Errorf("%w: %q", ErrUnsupportedCredential, requested)
 }
 
-// Authenticate records the authenticated organisation and returns the consent view.
-func (s *Service) Authenticate(sessionID string, org issuance.Organization) (ConsentView, error) {
-	iss, ok := s.store.Get(sessionID)
-	if !ok {
-		return ConsentView{}, ErrSessionNotFound
-	}
+// Authenticate records the authenticated organisation and returns the consent
+// details to present.
+func (s *Service) Authenticate(iss *issuance.Issuance, org issuance.Organization) (ConsentDetails, error) {
 	if err := iss.Authenticate(org); err != nil {
-		return ConsentView{}, err
+		return ConsentDetails{}, err
 	}
-	return ConsentView{
-		SessionID:      iss.ID(),
-		CredentialType: iss.ConfigID(),
+	return ConsentDetails{
 		Organization:   org,
 		Recipient:      iss.Recipient(),
+		CredentialType: iss.ConfigID(),
 		Services:       credentials.DefaultServiceProviderServices,
 	}, nil
 }
 
-// Consent records the chosen services, mints an authorization code and returns
-// the redirect view.
-func (s *Service) Consent(sessionID string, services []string) (RedirectView, error) {
-	iss, ok := s.store.Get(sessionID)
-	if !ok {
-		return RedirectView{}, ErrSessionNotFound
-	}
-	code := randID()
-	if err := iss.GrantConsent(services, code); err != nil {
-		return RedirectView{}, err
-	}
-	s.store.BindCode(code, iss.ID())
-	return RedirectView{Action: iss.RedirectURI(), Code: code, State: iss.OAuthState()}, nil
+// Consent records the chosen services.
+func (s *Service) Consent(iss *issuance.Issuance, services []string) error {
+	return iss.Consent(services)
 }
 
-// ExchangeToken redeems an authorization code for an access token + c_nonce.
-func (s *Service) ExchangeToken(code, verifier, redirectURI string) (TokenResult, error) {
-	iss, ok := s.store.TakeByCode(code)
-	if !ok {
-		return TokenResult{}, fmt.Errorf("%w: unknown or expired code", ErrInvalidGrant)
-	}
-	token := randID()
-	if err := iss.ExchangeCode(verifier, redirectURI, token); err != nil {
-		return TokenResult{}, fmt.Errorf("%w: %v", ErrInvalidGrant, err)
-	}
-	s.store.BindToken(token, iss.ID())
-	nonce := randID()
-	s.store.PutNonce(nonce)
-	return TokenResult{AccessToken: token, CNonce: nonce, ExpiresIn: int(s.cfg.AccessTokenTTL.Seconds())}, nil
-}
-
-// IssueNonce hands out a fresh c_nonce (the OpenID4VCI nonce endpoint).
-func (s *Service) IssueNonce() string {
-	nonce := randID()
-	s.store.PutNonce(nonce)
-	return nonce
-}
-
-// IssueCredential validates the request proof, mints the credential and returns
-// it verbatim.
-func (s *Service) IssueCredential(ctx context.Context, token, proofJWT string) (json.RawMessage, error) {
-	iss, ok := s.store.ByToken(token)
-	if !ok {
-		return nil, ErrInvalidToken
-	}
-	res, err := s.proofs.Verify(ctx, proofJWT)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidProof, err)
-	}
-	if !s.store.ConsumeNonce(res.Nonce) {
-		return nil, fmt.Errorf("%w: nonce is missing, unknown or expired", ErrInvalidProof)
-	}
-
+// Issue mints the credential for the given holder and returns it verbatim.
+func (s *Service) Issue(ctx context.Context, iss *issuance.Issuance, holderDID string) (json.RawMessage, error) {
 	issuerDID, err := s.resolveIssuerDID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve issuer DID: %w", err)
 	}
-	org := iss.Organization()
 	cred := credentials.BuildServiceProviderCredential(issuerDID, credentials.ServiceProvider{
-		DID:       res.HolderDID,
-		LegalName: org.LegalName,
+		DID:       holderDID,
+		LegalName: iss.Organization().LegalName,
 		Services:  iss.Services(),
 	}, s.cfg.CredentialValidity, s.now())
 
-	vc, err := s.minter.IssueVC(ctx, cred)
+	vc, err := s.minter.Mint(ctx, cred)
 	if err != nil {
 		return nil, fmt.Errorf("mint credential: %w", err)
 	}
-	if err := iss.MarkIssued(); err != nil {
+	if err := iss.Issue(holderDID); err != nil {
 		return nil, err
 	}
 	return vc, nil

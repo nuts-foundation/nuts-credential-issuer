@@ -1,12 +1,25 @@
 package openid4vci
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+// verifyPKCE reports whether the code_verifier matches the S256 code_challenge.
+func verifyPKCE(verifier, challenge string) bool {
+	if verifier == "" || challenge == "" {
+		return false
+	}
+	sum := sha256.Sum256([]byte(verifier))
+	expected := base64.RawURLEncoding.EncodeToString(sum[:])
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(challenge)) == 1
+}
 
 // credentialRequest models the OpenID4VCI credential request. It accepts both
 // the OpenID4VCI 1.0 plural "proofs" shape and the older singular "proof" shape,

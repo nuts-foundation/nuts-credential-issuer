@@ -1,21 +1,38 @@
-// Package web renders the issuer's HTML pages from embedded htmx templates. It
-// implements the application's Presenter port.
+// Package web renders the issuer's HTML pages from embedded htmx templates. Its
+// view models are plain data; the inbound adapter maps to them, so web has no
+// dependency on the application or protocol packages.
 package web
 
 import (
 	"embed"
 	"html/template"
 	"net/http"
-	"strings"
-
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
 )
 
 //go:embed templates/*.html
 var templatesFS embed.FS
 
-// Renderer renders the issuer's pages (consent, redirect, error). The login page
-// lives with its authenticator (see the eherkenning package).
+// ConsentView is the consent page model.
+type ConsentView struct {
+	SessionID       string
+	PostPath        string
+	CredentialType  string
+	OrgName         string
+	OrgIdentifier   string
+	Recipient       string // wallet host
+	RecipientDetail string // wallet path/identifier
+	Services        string
+}
+
+// RedirectView is the auto-submit redirect page model.
+type RedirectView struct {
+	Action string
+	Code   string
+	State  string
+}
+
+// Renderer renders the issuer's pages. The login page lives with its
+// authenticator (see the eherkenning package).
 type Renderer struct {
 	tmpl *template.Template
 }
@@ -32,34 +49,14 @@ func New(title string) (*Renderer, error) {
 	return &Renderer{tmpl: tmpl}, nil
 }
 
-type consentPage struct {
-	SessionID       string
-	PostPath        string
-	CredentialType  string
-	OrgName         string
-	OrgIdentifier   string
-	Recipient       string
-	RecipientDetail string
-	Services        string
-}
-
 // Consent renders the consent page.
-func (r *Renderer) Consent(w http.ResponseWriter, v issuer.ConsentView) error {
-	return r.render(w, http.StatusOK, "consent.html", consentPage{
-		SessionID:       v.SessionID,
-		PostPath:        issuer.ConsentPath,
-		CredentialType:  v.CredentialType,
-		OrgName:         v.Organization.LegalName,
-		OrgIdentifier:   v.Organization.Identifier,
-		Recipient:       v.Recipient.Host,
-		RecipientDetail: v.Recipient.Detail,
-		Services:        strings.Join(v.Services, ", "),
-	})
+func (r *Renderer) Consent(w http.ResponseWriter, v ConsentView) error {
+	return r.render(w, http.StatusOK, "consent.html", v)
 }
 
 // Redirect renders the auto-submitting form that returns the authorization code
 // to the wallet's redirect_uri.
-func (r *Renderer) Redirect(w http.ResponseWriter, v issuer.RedirectView) error {
+func (r *Renderer) Redirect(w http.ResponseWriter, v RedirectView) error {
 	return r.render(w, http.StatusOK, "redirect.html", v)
 }
 
@@ -73,6 +70,3 @@ func (r *Renderer) render(w http.ResponseWriter, status int, name string, data a
 	w.WriteHeader(status)
 	return r.tmpl.ExecuteTemplate(w, name, data)
 }
-
-// Ensure *Renderer satisfies the application's Presenter port.
-var _ issuer.Presenter = (*Renderer)(nil)

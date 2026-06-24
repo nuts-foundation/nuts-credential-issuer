@@ -22,7 +22,6 @@ import (
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/didweb"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/memory"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/nutsclient"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/openid4vci"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/proof"
@@ -58,34 +57,35 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Outbound adapters and stores.
+	// Outbound adapters.
 	nuts := nutsclient.New(cfg.NutsNodeURL, &http.Client{Timeout: 30 * time.Second})
-	store := memory.NewStore(sessionTTL, time.Now)
-	defer store.Close()
 	verifier := proof.NewVerifier(didweb.New(cfg.InsecureDIDWeb, &http.Client{Timeout: 10 * time.Second}), cfg.BaseURL, time.Now)
 
-	// Application service.
-	service := issuer.NewService(store, nuts, nuts, verifier, time.Now, issuer.Config{
+	// Application service (protocol-agnostic).
+	service := issuer.NewService(nuts, nuts, time.Now, issuer.Config{
 		IssuerSubject:      cfg.IssuerSubject,
 		ConfigID:           credentials.ServiceProviderCredentialType,
 		CredentialValidity: cfg.CredentialValidity,
-		AccessTokenTTL:     sessionTTL,
 	})
 
-	// Inbound HTTP adapter.
+	// Inbound HTTP adapter (owns the OAuth/OpenID4VCI protocol and session state).
 	adapter, err := openid4vci.New(openid4vci.Options{
 		BaseURL:               cfg.BaseURL,
 		AuthorizationEndpoint: cfg.AuthorizationEndpoint,
 		Service:               service,
-		Presenter:             renderer,
+		Renderer:              renderer,
 		Authenticator:         authenticator,
+		Proofs:                verifier,
 		CallbackRewriteFrom:   cfg.CallbackRewriteFrom,
 		CallbackRewriteTo:     cfg.CallbackRewriteTo,
+		SessionTTL:            sessionTTL,
+		Now:                   time.Now,
 	})
 	if err != nil {
 		slog.Error("failed to start issuer", "err", err)
 		os.Exit(1)
 	}
+	defer adapter.Close()
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
