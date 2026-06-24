@@ -1,21 +1,21 @@
-// Package web renders the issuer's HTML pages (login, consent and the
-// auto-submit redirect) from embedded htmx templates.
+// Package web renders the issuer's HTML pages from embedded htmx templates. It
+// implements the application's Presenter port.
 package web
 
 import (
 	"embed"
 	"html/template"
 	"net/http"
+	"strings"
 
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/openid4vci"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
 )
 
 //go:embed templates/*.html
 var templatesFS embed.FS
 
-// Renderer renders the issuer's pages (consent, redirect, error). It implements
-// openid4vci.Renderer. The login page lives with its authenticator (see the
-// eherkenning package).
+// Renderer renders the issuer's pages (consent, redirect, error). The login page
+// lives with its authenticator (see the eherkenning package).
 type Renderer struct {
 	tmpl *template.Template
 }
@@ -32,15 +32,35 @@ func New(title string) (*Renderer, error) {
 	return &Renderer{tmpl: tmpl}, nil
 }
 
+type consentPage struct {
+	SessionID       string
+	PostPath        string
+	CredentialType  string
+	OrgName         string
+	OrgIdentifier   string
+	Recipient       string
+	RecipientDetail string
+	Services        string
+}
+
 // Consent renders the consent page.
-func (r *Renderer) Consent(w http.ResponseWriter, data openid4vci.ConsentData) error {
-	return r.render(w, http.StatusOK, "consent.html", data)
+func (r *Renderer) Consent(w http.ResponseWriter, v issuer.ConsentView) error {
+	return r.render(w, http.StatusOK, "consent.html", consentPage{
+		SessionID:       v.SessionID,
+		PostPath:        issuer.ConsentPath,
+		CredentialType:  v.CredentialType,
+		OrgName:         v.Organization.LegalName,
+		OrgIdentifier:   v.Organization.Identifier,
+		Recipient:       v.Recipient.Host,
+		RecipientDetail: v.Recipient.Detail,
+		Services:        strings.Join(v.Services, ", "),
+	})
 }
 
 // Redirect renders the auto-submitting form that returns the authorization code
 // to the wallet's redirect_uri.
-func (r *Renderer) Redirect(w http.ResponseWriter, data openid4vci.RedirectData) error {
-	return r.render(w, http.StatusOK, "redirect.html", data)
+func (r *Renderer) Redirect(w http.ResponseWriter, v issuer.RedirectView) error {
+	return r.render(w, http.StatusOK, "redirect.html", v)
 }
 
 // Error renders an error page.
@@ -54,5 +74,5 @@ func (r *Renderer) render(w http.ResponseWriter, status int, name string, data a
 	return r.tmpl.ExecuteTemplate(w, name, data)
 }
 
-// Ensure *Renderer satisfies the issuer's Renderer interface.
-var _ openid4vci.Renderer = (*Renderer)(nil)
+// Ensure *Renderer satisfies the application's Presenter port.
+var _ issuer.Presenter = (*Renderer)(nil)

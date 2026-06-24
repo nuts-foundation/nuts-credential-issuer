@@ -5,20 +5,33 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth/eherkenning"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/config"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/didweb"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/memory"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/nutsclient"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/openid4vci"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/proof"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/web"
 )
+
+// sessionTTL bounds how long an in-flight issuance and its c_nonces live, and is
+// reported as the access-token expires_in.
+const sessionTTL = 10 * time.Minute
 
 func main() {
 	// "healthcheck" mode is used by the container HEALTHCHECK; the distroless
@@ -45,30 +58,70 @@ func main() {
 		os.Exit(1)
 	}
 
-	issuer, err := openid4vci.New(openid4vci.Options{
+	// Outbound adapters and stores.
+	nuts := nutsclient.New(cfg.NutsNodeURL, &http.Client{Timeout: 30 * time.Second})
+	store := memory.NewStore(sessionTTL, time.Now)
+	defer store.Close()
+	verifier := proof.NewVerifier(didweb.New(cfg.InsecureDIDWeb, &http.Client{Timeout: 10 * time.Second}), cfg.BaseURL, time.Now)
+
+	// Application service.
+	service := issuer.NewService(store, nuts, nuts, verifier, time.Now, issuer.Config{
+		IssuerSubject:      cfg.IssuerSubject,
+		ConfigID:           credentials.ServiceProviderCredentialType,
+		CredentialValidity: cfg.CredentialValidity,
+		AccessTokenTTL:     sessionTTL,
+	})
+
+	// Inbound HTTP adapter.
+	adapter, err := openid4vci.New(openid4vci.Options{
 		BaseURL:               cfg.BaseURL,
 		AuthorizationEndpoint: cfg.AuthorizationEndpoint,
-		IssuerSubject:         cfg.IssuerSubject,
-		CredentialValidity:    cfg.CredentialValidity,
+		Service:               service,
+		Presenter:             renderer,
 		Authenticator:         authenticator,
-		Nuts:                  nutsclient.New(cfg.NutsNodeURL, &http.Client{Timeout: 30 * time.Second}),
-		Renderer:              renderer,
-		InsecureDIDWeb:        cfg.InsecureDIDWeb,
 		CallbackRewriteFrom:   cfg.CallbackRewriteFrom,
 		CallbackRewriteTo:     cfg.CallbackRewriteTo,
-		HTTPClient:            &http.Client{Timeout: 10 * time.Second},
 	})
 	if err != nil {
 		slog.Error("failed to start issuer", "err", err)
 		os.Exit(1)
 	}
-	defer issuer.Close()
 
+	srv := &http.Server{
+		Addr:              cfg.ListenAddr,
+		Handler:           adapter.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	slog.Info("nuts-credential-issuer listening",
 		"addr", cfg.ListenAddr, "base_url", cfg.BaseURL, "issuer_subject", cfg.IssuerSubject, "nuts_node", cfg.NutsNodeURL)
-	if err := http.ListenAndServe(cfg.ListenAddr, issuer.Handler()); err != nil {
+	if err := serve(srv); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)
+	}
+}
+
+// serve runs the HTTP server until SIGINT/SIGTERM, then shuts it down gracefully.
+func serve(srv *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		slog.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
 	}
 }
 

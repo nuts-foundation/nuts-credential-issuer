@@ -5,7 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/openid4vci"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuance"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
 )
 
 func TestConsentRendersRecipient(t *testing.T) {
@@ -14,14 +15,12 @@ func TestConsentRendersRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := r.Consent(rec, openid4vci.ConsentData{
-		SessionID:       "sess-1",
-		PostPath:        "/consent",
-		OrgName:         "Voorbeeld B.V.",
-		OrgIdentifier:   "90000001",
-		CredentialType:  "ServiceProviderCredential",
-		Recipient:       "wallet.example.nl:8080",
-		RecipientDetail: "oauth2/wallet",
+	if err := r.Consent(rec, issuer.ConsentView{
+		SessionID:      "sess-1",
+		CredentialType: "ServiceProviderCredential",
+		Organization:   issuance.Organization{LegalName: "Voorbeeld B.V.", Identifier: "90000001"},
+		Recipient:      issuance.Recipient{Host: "wallet.example.nl:8080", Detail: "oauth2/wallet"},
+		Services:       []string{"gbc-client"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +41,7 @@ func TestRedirectAndErrorRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := r.Redirect(rec, openid4vci.RedirectData{Action: "http://localhost:8080/cb", Code: "c", State: "s"}); err != nil {
+	if err := r.Redirect(rec, issuer.RedirectView{Action: "http://localhost:8080/cb", Code: "c", State: "s"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(rec.Body.String(), `action="http://localhost:8080/cb"`) {

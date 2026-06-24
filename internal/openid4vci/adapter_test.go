@@ -1,0 +1,327 @@
+package openid4vci_test
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/memory"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/nutsclient"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/openid4vci"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/proof"
+)
+
+const (
+	testAudience  = "https://issuer.example.nl"
+	testIssuerDID = "did:web:issuer.example.nl"
+	testHolderDID = "did:web:holder.example.nl"
+)
+
+// --- stubs ------------------------------------------------------------------
+
+type stubAuth struct{ attrs auth.Attributes }
+
+func (a stubAuth) Start(w http.ResponseWriter, _ *http.Request, session string) error {
+	_, _ = io.WriteString(w, session)
+	return nil
+}
+func (a stubAuth) RegisterRoutes(mux *http.ServeMux, result auth.Result) {
+	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		result(w, r, r.FormValue("session"), a.attrs)
+	})
+}
+
+type stubPresenter struct{ lastRedirect issuer.RedirectView }
+
+func (p *stubPresenter) Consent(http.ResponseWriter, issuer.ConsentView) error { return nil }
+func (p *stubPresenter) Redirect(w http.ResponseWriter, v issuer.RedirectView) error {
+	p.lastRedirect = v
+	_, _ = io.WriteString(w, v.Code)
+	return nil
+}
+func (p *stubPresenter) Error(w http.ResponseWriter, status int, message string) {
+	http.Error(w, message, status)
+}
+
+// stubVerifier echoes the proof string as the nonce, so flow tests can drive the
+// nonce check without real crypto (proof crypto is tested in package proof).
+type stubVerifier struct {
+	holderDID string
+	err       error
+}
+
+func (v stubVerifier) Verify(_ context.Context, token string) (proof.Result, error) {
+	if v.err != nil {
+		return proof.Result{}, v.err
+	}
+	return proof.Result{HolderDID: v.holderDID, Nonce: token}, nil
+}
+
+type issuedVC struct {
+	Type              []string       `json:"type"`
+	Issuer            string         `json:"issuer"`
+	CredentialSubject map[string]any `json:"credentialSubject"`
+	Format            string         `json:"format"`
+}
+
+type fakeNode struct {
+	server   *httptest.Server
+	lastBody issuedVC
+}
+
+func newFakeNode(t *testing.T) *fakeNode {
+	t.Helper()
+	n := &fakeNode{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/internal/vdr/v2/subject/issuer", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]string{testIssuerDID})
+	})
+	mux.HandleFunc("/internal/vcr/v2/issuer/vc", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&n.lastBody)
+		_ = json.NewEncoder(w).Encode("header.payload.signature")
+	})
+	n.server = httptest.NewServer(mux)
+	t.Cleanup(n.server.Close)
+	return n
+}
+
+// --- harness ----------------------------------------------------------------
+
+type harness struct {
+	srv       *httptest.Server
+	node      *fakeNode
+	presenter *stubPresenter
+}
+
+func newHarness(t *testing.T, opts openid4vci.Options, verr error) *harness {
+	t.Helper()
+	now := time.Now()
+	node := newFakeNode(t)
+	nuts := nutsclient.New(node.server.URL, nil)
+	store := memory.NewStore(10*time.Minute, func() time.Time { return now })
+	t.Cleanup(store.Close)
+	svc := issuer.NewService(store, nuts, nuts, stubVerifier{holderDID: testHolderDID, err: verr}, func() time.Time { return now },
+		issuer.Config{IssuerSubject: "issuer", ConfigID: credentials.ServiceProviderCredentialType, CredentialValidity: 24 * time.Hour, AccessTokenTTL: 10 * time.Minute})
+
+	presenter := &stubPresenter{}
+	if opts.BaseURL == "" {
+		opts.BaseURL = testAudience
+	}
+	opts.Service = svc
+	opts.Presenter = presenter
+	if opts.Authenticator == nil {
+		opts.Authenticator = stubAuth{attrs: auth.Attributes{LegalName: "Voorbeeld B.V.", Identifier: "90000001"}}
+	}
+	adapter, err := openid4vci.New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(adapter.Handler())
+	t.Cleanup(srv.Close)
+	return &harness{srv: srv, node: node, presenter: presenter}
+}
+
+func pkcePair() (verifier, challenge string) {
+	verifier = "test-verifier-0123456789-0123456789-0123456789"
+	sum := sha256.Sum256([]byte(verifier))
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// driveToToken runs authorize -> login -> consent -> token and returns the
+// access token and c_nonce. services is posted on consent (may be empty).
+func (h *harness) driveToToken(t *testing.T, redirectURI, services string) (token, cNonce string) {
+	t.Helper()
+	c := h.srv.Client()
+	verifier, challenge := pkcePair()
+
+	authURL := h.srv.URL + "/authorize?" + url.Values{
+		"response_type":         {"code"},
+		"redirect_uri":          {redirectURI},
+		"state":                 {"st"},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"client_id":             {"http://nutsnode:8080/oauth2/wallet"},
+	}.Encode()
+	sessionID := string(mustGet(t, c, authURL))
+	mustPostForm(t, c, h.srv.URL+"/login", url.Values{"session": {sessionID}})
+	code := string(mustPostForm(t, c, h.srv.URL+issuer.ConsentPath, url.Values{"session": {sessionID}, "services": {services}}))
+
+	body := mustPostForm(t, c, h.srv.URL+"/token", url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"code_verifier": {verifier},
+		"redirect_uri":  {redirectURI},
+	})
+	var tok struct {
+		AccessToken string `json:"access_token"`
+		CNonce      string `json:"c_nonce"`
+	}
+	if err := json.Unmarshal(body, &tok); err != nil {
+		t.Fatal(err)
+	}
+	return tok.AccessToken, tok.CNonce
+}
+
+// --- tests ------------------------------------------------------------------
+
+func TestFlow_HappyPath(t *testing.T) {
+	h := newHarness(t, openid4vci.Options{}, nil)
+	token, cNonce := h.driveToToken(t, "http://wallet/cb", "gbc-client, gbc-server")
+	if token == "" || cNonce == "" {
+		t.Fatal("missing token or c_nonce")
+	}
+
+	// /credential: the stub verifier treats the proof string as the nonce.
+	body := mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", token,
+		`{"proofs":{"jwt":["`+cNonce+`"]}}`, http.StatusOK)
+	var cred struct {
+		Credentials []struct {
+			Credential json.RawMessage `json:"credential"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(body, &cred); err != nil {
+		t.Fatal(err)
+	}
+	if len(cred.Credentials) != 1 {
+		t.Fatalf("want 1 credential, got %d", len(cred.Credentials))
+	}
+
+	subj := h.node.lastBody.CredentialSubject
+	if subj["id"] != testHolderDID {
+		t.Errorf("subject id = %v, want holder DID", subj["id"])
+	}
+	if subj["name"] != "Voorbeeld B.V." {
+		t.Errorf("subject name = %v", subj["name"])
+	}
+	if h.node.lastBody.Issuer != testIssuerDID {
+		t.Errorf("issuer = %v, want resolved DID", h.node.lastBody.Issuer)
+	}
+	if h.node.lastBody.Format != "jwt_vc" {
+		t.Errorf("format = %v", h.node.lastBody.Format)
+	}
+	// Edited services flowed through.
+	svcs, _ := subj["services"].([]any)
+	if len(svcs) != 2 || svcs[0] != "gbc-client" || svcs[1] != "gbc-server" {
+		t.Errorf("services = %v, want [gbc-client gbc-server]", subj["services"])
+	}
+}
+
+func TestCredential_RejectsUnauthenticated(t *testing.T) {
+	h := newHarness(t, openid4vci.Options{}, nil)
+	mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", "", `{"proofs":{"jwt":["x"]}}`, http.StatusUnauthorized)
+	mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", "nope", `{"proofs":{"jwt":["x"]}}`, http.StatusUnauthorized)
+}
+
+func TestCredential_RejectsMissingProof(t *testing.T) {
+	h := newHarness(t, openid4vci.Options{}, nil)
+	token, _ := h.driveToToken(t, "http://wallet/cb", "")
+	mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", token, `{}`, http.StatusBadRequest)
+}
+
+func TestCredential_RejectsBadNonce(t *testing.T) {
+	h := newHarness(t, openid4vci.Options{}, nil)
+	token, _ := h.driveToToken(t, "http://wallet/cb", "")
+	// A proof whose nonce was never issued is rejected, and nothing is minted.
+	mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", token, `{"proofs":{"jwt":["never-issued"]}}`, http.StatusBadRequest)
+	if h.node.lastBody.Issuer != "" {
+		t.Error("node was called despite a bad nonce")
+	}
+}
+
+func TestCredential_RejectsInvalidProof(t *testing.T) {
+	h := newHarness(t, openid4vci.Options{}, context.DeadlineExceeded) // verifier fails
+	token, cNonce := h.driveToToken(t, "http://wallet/cb", "")
+	mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", token, `{"proofs":{"jwt":["`+cNonce+`"]}}`, http.StatusBadRequest)
+}
+
+func TestMetadata(t *testing.T) {
+	h := newHarness(t, openid4vci.Options{AuthorizationEndpoint: "http://localhost:9/authorize"}, nil)
+	var im map[string]any
+	_ = json.Unmarshal(mustGet(t, h.srv.Client(), h.srv.URL+"/.well-known/openid-credential-issuer"), &im)
+	if im["credential_issuer"] != testAudience || im["credential_endpoint"] != testAudience+"/credential" {
+		t.Errorf("issuer metadata = %v", im)
+	}
+	configs, _ := im["credential_configurations_supported"].(map[string]any)
+	if _, ok := configs["ServiceProviderCredential"]; !ok {
+		t.Errorf("metadata missing ServiceProviderCredential: %v", configs)
+	}
+	var as map[string]any
+	_ = json.Unmarshal(mustGet(t, h.srv.Client(), h.srv.URL+"/.well-known/oauth-authorization-server"), &as)
+	if as["token_endpoint"] != testAudience+"/token" || as["authorization_endpoint"] != "http://localhost:9/authorize" {
+		t.Errorf("AS metadata = %v", as)
+	}
+}
+
+func TestCallbackRewrite(t *testing.T) {
+	h := newHarness(t, openid4vci.Options{CallbackRewriteFrom: "internal.host:8080", CallbackRewriteTo: "localhost:8080"}, nil)
+	redirectURI := "http://internal.host:8080/oauth2/wallet/callback"
+	token, _ := h.driveToToken(t, redirectURI, "")
+	if token == "" {
+		t.Fatal("token exchange with the original redirect_uri failed")
+	}
+	action := h.presenter.lastRedirect.Action
+	if !strings.Contains(action, "localhost:8080") || strings.Contains(action, "internal.host") {
+		t.Errorf("redirect action not rewritten for the browser: %q", action)
+	}
+}
+
+// --- helpers ----------------------------------------------------------------
+
+func mustGet(t *testing.T, c *http.Client, url string) []byte {
+	t.Helper()
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d: %s", url, resp.StatusCode, body)
+	}
+	return body
+}
+
+func mustPostForm(t *testing.T, c *http.Client, url string, form url.Values) []byte {
+	t.Helper()
+	resp, err := c.PostForm(url, form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST %s = %d: %s", url, resp.StatusCode, body)
+	}
+	return body
+}
+
+func mustCredential(t *testing.T, c *http.Client, url, token, body string, wantStatus int) []byte {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, url, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("POST %s = %d (want %d): %s", url, resp.StatusCode, wantStatus, respBody)
+	}
+	return respBody
+}

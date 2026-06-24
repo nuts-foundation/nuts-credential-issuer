@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
 )
 
 // Client talks to a Nuts node's internal API.
@@ -55,8 +57,8 @@ func (c *Client) SubjectDID(ctx context.Context, subject string) (string, error)
 	return "", fmt.Errorf("subject %q has no did:web", subject)
 }
 
-// IssueVCRequest is the body of POST /internal/vcr/v2/issuer/vc.
-type IssueVCRequest struct {
+// issueVCRequest is the body of POST /internal/vcr/v2/issuer/vc.
+type issueVCRequest struct {
 	Context           []string `json:"@context,omitempty"`
 	Type              []string `json:"type"`
 	Issuer            string   `json:"issuer"`
@@ -67,11 +69,19 @@ type IssueVCRequest struct {
 	Format string `json:"format,omitempty"`
 }
 
-// IssueVC mints a verifiable credential via the Nuts node. The returned
-// json.RawMessage is the credential exactly as the node produced it (a JSON
-// string holding a JWT for format "jwt_vc"), ready to embed in an OpenID4VCI
-// credential response.
-func (c *Client) IssueVC(ctx context.Context, body IssueVCRequest) (json.RawMessage, error) {
+// IssueVC mints a verifiable credential via the Nuts node, mapping the neutral
+// domain credential to the node's API. The returned json.RawMessage is the
+// credential exactly as the node produced it (a JSON string holding a JWT for
+// format "jwt_vc"), ready to embed in an OpenID4VCI credential response.
+func (c *Client) IssueVC(ctx context.Context, cred credentials.Credential) (json.RawMessage, error) {
+	body := issueVCRequest{
+		Context:           cred.Context,
+		Type:              cred.Type,
+		Issuer:            cred.IssuerDID,
+		CredentialSubject: cred.Subject,
+		ExpirationDate:    cred.ExpirationDate,
+		Format:            cred.Format,
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal issue request: %w", err)

@@ -8,11 +8,7 @@
 // later without generalising into a runtime-configurable registry.
 package credentials
 
-import (
-	"time"
-
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/nutsclient"
-)
+import "time"
 
 // ServiceProviderCredentialType is the credential type and the OpenID4VCI
 // credential configuration id this issuer advertises.
@@ -43,19 +39,19 @@ type ServiceProvider struct {
 	Services []string
 }
 
-// BuildServiceProviderCredential assembles the Nuts node issue request for a
-// ServiceProviderCredential. The @context is intrinsic to the credential type;
-// services default to DefaultServiceProviderServices when none are given.
-func BuildServiceProviderCredential(issuerDID string, sp ServiceProvider, validity time.Duration, now time.Time) nutsclient.IssueVCRequest {
+// BuildServiceProviderCredential assembles a ServiceProviderCredential. The
+// @context is intrinsic to the credential type; services default to
+// DefaultServiceProviderServices when none are given.
+func BuildServiceProviderCredential(issuerDID string, sp ServiceProvider, validity time.Duration, now time.Time) Credential {
 	services := sp.Services
 	if len(services) == 0 {
 		services = DefaultServiceProviderServices
 	}
-	return nutsclient.IssueVCRequest{
-		Context: serviceProviderContext,
-		Type:    []string{"VerifiableCredential", ServiceProviderCredentialType},
-		Issuer:  issuerDID,
-		CredentialSubject: map[string]any{
+	return Credential{
+		Context:   serviceProviderContext,
+		Type:      []string{"VerifiableCredential", ServiceProviderCredentialType},
+		IssuerDID: issuerDID,
+		Subject: map[string]any{
 			"id":       sp.DID,
 			"@type":    "ServiceProvider",
 			"name":     sp.LegalName,

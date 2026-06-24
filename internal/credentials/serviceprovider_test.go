@@ -17,8 +17,8 @@ func TestBuildServiceProviderCredential(t *testing.T) {
 		now,
 	)
 
-	if req.Issuer != "did:web:issuer.example.nl" {
-		t.Errorf("issuer = %q", req.Issuer)
+	if req.IssuerDID != "did:web:issuer.example.nl" {
+		t.Errorf("issuer = %q", req.IssuerDID)
 	}
 	if got := req.Type; len(got) != 2 || got[0] != "VerifiableCredential" || got[1] != ServiceProviderCredentialType {
 		t.Errorf("type = %v", got)
@@ -33,10 +33,7 @@ func TestBuildServiceProviderCredential(t *testing.T) {
 		t.Errorf("@context = %v", req.Context)
 	}
 
-	subj, ok := req.CredentialSubject.(map[string]any)
-	if !ok {
-		t.Fatalf("credentialSubject is %T, want map", req.CredentialSubject)
-	}
+	subj := req.Subject
 	if subj["id"] != "did:web:sp.example.nl" {
 		t.Errorf("subject id = %v", subj["id"])
 	}

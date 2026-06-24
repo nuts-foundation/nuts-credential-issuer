@@ -36,8 +36,13 @@ import (
 	"time"
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth/eherkenning"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/didweb"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/memory"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/nutsclient"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/openid4vci"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/proof"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/web"
 )
 
@@ -63,21 +68,28 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	issuer, err := openid4vci.New(openid4vci.Options{
-		BaseURL:            strings.TrimRight(issuerBaseURL, "/"),
+	base := strings.TrimRight(issuerBaseURL, "/")
+	nuts := nutsclient.New(strings.TrimRight(nodeInternal, "/"), nil)
+	store := memory.NewStore(10*time.Minute, time.Now)
+	defer store.Close()
+	verifier := proof.NewVerifier(didweb.New(true, nil), base, time.Now)
+	svc := issuer.NewService(store, nuts, nuts, verifier, time.Now, issuer.Config{
 		IssuerSubject:      issuerSubject,
+		ConfigID:           credentials.ServiceProviderCredentialType,
 		CredentialValidity: 24 * time.Hour,
-		Authenticator:      authenticator,
-		Nuts:               nutsclient.New(strings.TrimRight(nodeInternal, "/"), nil),
-		Renderer:           renderer,
-		InsecureDIDWeb:     true,
+		AccessTokenTTL:     10 * time.Minute,
+	})
+	adapter, err := openid4vci.New(openid4vci.Options{
+		BaseURL:       base,
+		Service:       svc,
+		Presenter:     renderer,
+		Authenticator: authenticator,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer issuer.Close()
 
-	srv := &http.Server{Addr: listenAddr, Handler: issuer.Handler()}
+	srv := &http.Server{Addr: listenAddr, Handler: adapter.Handler()}
 	go func() { _ = srv.ListenAndServe() }()
 	defer srv.Close()
 	time.Sleep(200 * time.Millisecond) // let the listener come up
@@ -116,7 +128,7 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 	sessionID := firstSubmatch(t, `name="session"\s+value="([^"]+)"`, loginHTML, "session id on login page")
 	consentHTML := httpPostForm(t, client, issuerBaseURL+eherkenning.LoginPath, url.Values{"session": {sessionID}})
 	_ = consentHTML
-	redirectHTML := httpPostForm(t, client, issuerBaseURL+openid4vci.ConsentPath, url.Values{"session": {sessionID}})
+	redirectHTML := httpPostForm(t, client, issuerBaseURL+issuer.ConsentPath, url.Values{"session": {sessionID}})
 
 	action := firstSubmatch(t, `action="([^"]+)"`, redirectHTML, "redirect action")
 	code := firstSubmatch(t, `name="code"\s+value="([^"]+)"`, redirectHTML, "code")
