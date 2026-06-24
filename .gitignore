@@ -1,0 +1,14 @@
+# Scratch / working files
+.scratch/
+
+# Built binary
+/nuts-credential-issuer
+*.out
+
+# IntelliJ / JetBrains
+.idea/
+*.iml
+
+# Claude Code
+.claude/
+CLAUDE.local.md

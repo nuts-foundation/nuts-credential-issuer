@@ -1,0 +1,11 @@
+{{template "head" .}}
+<div class="card err">
+  <div class="head">
+    <div class="eyebrow">Error</div>
+    <h1>Something went wrong</h1>
+  </div>
+  <div class="body">
+    <p class="lede">{{.Message}}</p>
+  </div>
+</div>
+{{template "foot" .}}

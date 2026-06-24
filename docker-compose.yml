@@ -1,0 +1,57 @@
+# Local demo stack for the nuts-credential-issuer.
+#
+# Topology (no /etc/hosts changes needed):
+#   - Server-to-server calls use Docker service names (nutsnode, issuer).
+#   - The one browser-facing URL (the OAuth authorization endpoint) uses
+#     localhost, and the request script rewrites the node's callback host to
+#     localhost as well. So everything is reachable from the host.
+#
+# Usage:
+#   make up        # start node + admin, provision DIDs, start issuer
+#   make request   # run the OpenID4VCI flow and fetch the credential
+#   make down      # tear everything down
+
+services:
+  nutsnode:
+    image: nutsfoundation/nuts-node:project-gf-pilot
+    environment:
+      NUTS_CONFIGFILE: /nuts/nuts.yaml
+      NUTS_VERBOSITY: debug
+    volumes:
+      - ./deploy/nuts/nuts.yaml:/nuts/nuts.yaml:ro
+      - ./deploy/nuts/contexts:/nuts/contexts:ro
+    ports:
+      - "8080:8080"   # public API (browser-reachable as localhost:8080)
+      - "18081:8081"  # internal API (host tooling / request script)
+
+  nutsadmin:
+    image: nutsfoundation/nuts-admin:6
+    environment:
+      NUTS_NODE_ADDRESS: http://nutsnode:8081
+    ports:
+      - "1305:1305"
+    depends_on:
+      - nutsnode
+
+  issuer:
+    build: .
+    environment:
+      CIS_LISTEN_ADDR: ":8088"
+      CIS_TITLE: "Zorg-softwareleverancier Credentialuitgever"
+      # Server-to-server identifier (credential_issuer, token, credential, nonce).
+      CIS_BASE_URL: "http://issuer:8088"
+      # The one browser-facing URL.
+      CIS_AUTHORIZATION_ENDPOINT: "http://localhost:8088/authorize"
+      # Nuts subject the issuer issues from; its DID is resolved from the node at
+      # runtime. Create this subject in Nuts Admin (http://localhost:1305).
+      CIS_ISSUER_SUBJECT: "issuer"
+      CIS_NUTS_NODE_URL: "http://nutsnode:8081"
+      CIS_DEMO: "true"
+      CIS_DID_WEB_INSECURE: "true"
+      # The node's callback URL uses the internal hostname (NUTS_URL=nutsnode:8080);
+      # rewrite it to localhost so a browser can reach it during the interactive demo.
+      CIS_BROWSER_CALLBACK_REWRITE: "nutsnode:8080=localhost:8080"
+    ports:
+      - "8088:8088"
+    depends_on:
+      - nutsnode

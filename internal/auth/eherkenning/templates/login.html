@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inloggen met eHerkenning</title>
+  <style>
+    :root {
+      --eh-blue: #2b2d7f;
+      --eh-blue-dark: #1f2160;
+      --eh-orange: #f07d00;
+      --ink: #1d1d27;
+      --muted: #5b5b6b;
+      --line: #d9d9e2;
+      --bg: #eef0f5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      min-height: 100vh; display: flex; flex-direction: column;
+    }
+    header.topbar {
+      background: #fff; border-bottom: 3px solid var(--eh-orange);
+      padding: .9rem 1.25rem; display: flex; align-items: center;
+    }
+    .logo { display: flex; align-items: center; gap: .6rem; }
+    .logo .mark { position: relative; width: 30px; height: 30px; }
+    .logo .mark span {
+      position: absolute; width: 19px; height: 19px; border-radius: 6px;
+    }
+    .logo .mark .b1 { background: var(--eh-blue); left: 0; top: 0; }
+    .logo .mark .b2 { background: var(--eh-orange); right: 0; bottom: 0; opacity: .92; }
+    .logo .word { font-size: 1.18rem; font-weight: 700; letter-spacing: -.01em; }
+    .logo .word .e { color: var(--eh-orange); }
+    .logo .word .rest { color: var(--eh-blue); }
+    main { flex: 1; display: flex; justify-content: center; padding: 2.5rem 1rem; }
+    .card {
+      background: #fff; width: 100%; max-width: 30rem; border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(31,33,96,.10); overflow: hidden; align-self: flex-start;
+    }
+    .card .head { background: var(--eh-blue); color: #fff; padding: 1.25rem 1.5rem; }
+    .card .head h1 { margin: 0; font-size: 1.2rem; font-weight: 600; }
+    .card .head p { margin: .35rem 0 0; font-size: .85rem; opacity: .85; }
+    .card .body { padding: 1.5rem; }
+    .demo {
+      display: flex; gap: .6rem; align-items: flex-start;
+      background: #fff6e6; border: 1px solid #f3c474; border-radius: 8px;
+      padding: .65rem .8rem; margin-bottom: 1.4rem; font-size: .83rem; color: #6a4a05;
+    }
+    .demo b { color: #8a5a00; }
+    label { display: block; margin: 0 0 .3rem; font-size: .85rem; font-weight: 600; color: var(--muted); }
+    .field { margin-bottom: 1.1rem; }
+    input {
+      width: 100%; padding: .65rem .75rem; font-size: 1rem;
+      border: 1px solid var(--line); border-radius: 7px; background: #fcfcfe;
+    }
+    input:focus { outline: none; border-color: var(--eh-blue); box-shadow: 0 0 0 3px rgba(43,45,127,.12); }
+    button {
+      width: 100%; margin-top: .4rem; padding: .8rem 1rem; font-size: 1rem; font-weight: 600;
+      color: #fff; background: var(--eh-orange); border: 0; border-radius: 7px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: .5rem;
+    }
+    button:hover { background: #d97100; }
+    .foot { padding: 1rem 1.5rem; border-top: 1px solid var(--line); font-size: .78rem; color: var(--muted); }
+    .arrow { font-size: 1.1rem; line-height: 1; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="logo" aria-label="eHerkenning">
+      <span class="mark"><span class="b1"></span><span class="b2"></span></span>
+      <span class="word"><span class="e">e</span><span class="rest">Herkenning</span></span>
+    </div>
+  </header>
+  <main>
+    <div class="card">
+      <div class="head">
+        <h1>Inloggen bij {{.Title}}</h1>
+        <p>U logt in om een ServiceProviderCredential aan te vragen.</p>
+      </div>
+      <div class="body">
+        <div class="demo">
+          <span>⚠️</span>
+          <span><b>Demo &mdash; geen echte eHerkenning.</b> Er vindt geen identiteitscontrole plaats. Pas de gegevens hieronder aan om als een andere organisatie in te loggen.</span>
+        </div>
+        <form method="post" action="{{.Action}}">
+          <input type="hidden" name="session" value="{{.Session}}">
+          <div class="field">
+            <label for="legal_name">Organisatie (statutaire naam)</label>
+            <input id="legal_name" name="legal_name" value="{{.LegalName}}" autocomplete="organization">
+          </div>
+          <div class="field">
+            <label for="identifier">KvK-nummer</label>
+            <input id="identifier" name="identifier" value="{{.Identifier}}" inputmode="numeric">
+          </div>
+          <button type="submit">Inloggen met eHerkenning <span class="arrow">&rarr;</span></button>
+        </form>
+      </div>
+      <div class="foot">Betrouwbaarheidsniveau EH3 &middot; Demo-omgeving</div>
+    </div>
+  </main>
+</body>
+</html>

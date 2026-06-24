@@ -1,0 +1,22 @@
+{{template "head" .}}
+<div class="card">
+  <div class="head">
+    <div class="eyebrow">Bijna klaar</div>
+    <h1>Terug naar uw wallet&hellip;</h1>
+  </div>
+  <div class="body">
+    <p class="lede">Akkoord. U wordt teruggestuurd naar uw wallet om de uitgifte te voltooien&hellip;</p>
+    <form method="get" action="{{.Action}}">
+      <input type="hidden" name="code" value="{{.Code}}">
+      <input type="hidden" name="state" value="{{.State}}">
+      <div class="actions">
+        <button class="primary" type="submit">Nu doorgaan</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+  // Give the user a moment to read this screen before returning to the wallet.
+  setTimeout(function () { document.forms[0].submit(); }, 3000);
+</script>
+{{template "foot" .}}
