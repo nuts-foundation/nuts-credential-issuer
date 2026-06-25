@@ -24,7 +24,10 @@ import (
 // adapter redirects the user here to begin authentication.
 const LoginPath = "/login"
 
-//go:embed templates/login.html
+// stylePath is where the login page's stylesheet is served.
+const stylePath = "/eherkenning.css"
+
+//go:embed templates/login.html templates/style.css
 var templatesFS embed.FS
 
 // Authenticator is the fake eHerkenning authenticator.
@@ -56,14 +59,23 @@ func New(defaultLegalName, defaultIdentifier, title string, result auth.Result) 
 	}, nil
 }
 
-// RegisterRoutes mounts the login page and submission handlers.
+// RegisterRoutes mounts the login page, its stylesheet and the submission handler.
 func (a *Authenticator) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+LoginPath, a.handleStart)
 	mux.HandleFunc("POST "+LoginPath, a.handleSubmit)
+	mux.HandleFunc("GET "+stylePath, handleStyle)
+}
+
+// handleStyle serves the login page's stylesheet.
+func handleStyle(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	data, _ := templatesFS.ReadFile("templates/style.css")
+	_, _ = w.Write(data)
 }
 
 type loginData struct {
 	Action     string
+	StylePath  string
 	Title      string
 	LegalName  string
 	Identifier string
@@ -75,6 +87,7 @@ func (a *Authenticator) handleStart(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.tmpl.Execute(w, loginData{
 		Action:     LoginPath,
+		StylePath:  stylePath,
 		Title:      a.title,
 		LegalName:  a.defaultLegalName,
 		Identifier: a.defaultIdentifier,
