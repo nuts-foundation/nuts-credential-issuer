@@ -54,6 +54,7 @@ func newSessionStore(ttl time.Duration, now func() time.Time) *sessionStore {
 	return s
 }
 
+// create stamps and stores a new session, keyed by its id.
 func (s *sessionStore) create(sess *session) {
 	sess.createdAt = s.now()
 	s.mu.Lock()
@@ -61,6 +62,7 @@ func (s *sessionStore) create(sess *session) {
 	s.byID[sess.id()] = sess
 }
 
+// get returns the live (non-expired) session for an id.
 func (s *sessionStore) get(id string) (*session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -71,6 +73,7 @@ func (s *sessionStore) get(id string) (*session, bool) {
 	return sess, true
 }
 
+// bindCode indexes a session by its issued authorization code.
 func (s *sessionStore) bindCode(code, id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -93,12 +96,14 @@ func (s *sessionStore) takeByCode(code string) (*session, bool) {
 	return sess, true
 }
 
+// bindToken indexes a session by its issued access token.
 func (s *sessionStore) bindToken(token, id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.byToken[token] = id
 }
 
+// byTokenLookup returns the live (non-expired) session for an access token.
 func (s *sessionStore) byTokenLookup(token string) (*session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

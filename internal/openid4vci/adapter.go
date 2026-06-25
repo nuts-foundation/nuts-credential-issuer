@@ -268,7 +268,9 @@ func (a *Adapter) handleCredential(w http.ResponseWriter, r *http.Request) {
 
 	res, err := a.opts.Proofs.Verify(r.Context(), proofJWT)
 	if err != nil {
-		oauthErr(w, http.StatusBadRequest, "invalid_proof", err.Error())
+		slog.Warn("credential-request proof verification failed", "err", err)
+		// TODO(#2): expose the detail only in non-strict mode.
+		oauthErr(w, http.StatusBadRequest, "invalid_proof", "proof verification failed")
 		return
 	}
 	if !a.store.consumeNonce(res.Nonce) {
@@ -287,7 +289,8 @@ func (a *Adapter) handleCredential(w http.ResponseWriter, r *http.Request) {
 	vc, err := a.opts.Service.Issue(r.Context(), sess.issuance, res.HolderDID)
 	if err != nil {
 		slog.Error("credential issuance failed", "err", err)
-		oauthErr(w, http.StatusInternalServerError, "server_error", "failed to mint credential")
+		// TODO(#2): keep this description generic; expose details only in non-strict mode.
+		oauthErr(w, http.StatusInternalServerError, "server_error", "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -295,11 +298,14 @@ func (a *Adapter) handleCredential(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// renderServiceError maps an application/domain error to the HTML error page.
+// renderServiceError logs the error and shows a generic HTML error page. The
+// detail is never returned to the client.
+// TODO(#2): expose the detail only in non-strict mode.
 func (a *Adapter) renderServiceError(w http.ResponseWriter, err error) {
 	if errors.Is(err, issuance.ErrInvalidState) {
 		a.opts.Renderer.Error(w, http.StatusBadRequest, "ongeldige stap in de sessie")
 		return
 	}
+	slog.Error("issuance step failed", "err", err)
 	a.opts.Renderer.Error(w, http.StatusInternalServerError, "er is iets misgegaan")
 }

@@ -4,7 +4,7 @@ import "net/url"
 
 // proofSigningAlgs are the signature algorithms this issuer accepts on
 // credential-request proofs.
-var proofSigningAlgs = []string{"ES256", "EdDSA"}
+var proofSigningAlgs = []string{"ES256", "PS256", "EdDSA"}
 
 // join appends path elements to a base URL, avoiding double-slash footguns. It
 // falls back to the base URL on the (unexpected) parse error.
