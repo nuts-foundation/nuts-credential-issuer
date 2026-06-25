@@ -7,6 +7,7 @@ RUN CGO_ENABLED=0 go build -o /out/nuts-credential-issuer .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.authors="info@reinkrul.nl"
+LABEL org.opencontainers.image.vendor="Nuts Foundation"
 COPY --from=build /out/nuts-credential-issuer /usr/local/bin/nuts-credential-issuer
 EXPOSE 8080
 # The distroless image has no shell/curl, so the binary checks its own /health.
