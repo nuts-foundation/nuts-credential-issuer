@@ -67,8 +67,8 @@ func (s *Service) resolveConfigID(requested string) (string, error) {
 
 // Authenticate records the authenticated organisation and returns the consent
 // details to present.
-func (s *Service) Authenticate(iss *issuance.Issuance, org issuance.Organization) (ConsentDetails, error) {
-	if err := iss.Authenticate(org); err != nil {
+func (s *Service) Authenticate(iss *issuance.Issuance, authenticatedOrg issuance.Organization) (ConsentDetails, error) {
+	if err := iss.Authenticate(authenticatedOrg); err != nil {
 		return ConsentDetails{}, err
 	}
 	snap := iss.Snapshot()
@@ -81,6 +81,10 @@ func (s *Service) Authenticate(iss *issuance.Issuance, org issuance.Organization
 }
 
 // Consent records the chosen services.
+//
+// NOTE: services are editable on the consent screen for the demo. In production
+// they should not be editable — this stays until we decide which services the
+// ServiceProviderCredential should assert (see lspxnuts-pilots #6/#7).
 func (s *Service) Consent(iss *issuance.Issuance, services []string) error {
 	return iss.Consent(services)
 }
@@ -116,7 +120,7 @@ func (s *Service) resolveIssuerDID(ctx context.Context) (string, error) {
 	if s.issuerDID != "" {
 		return s.issuerDID, nil
 	}
-	did, err := s.subjects.SubjectDID(ctx, s.cfg.IssuerSubject)
+	did, err := s.subjects.ResolveDID(ctx, s.cfg.IssuerSubject)
 	if err != nil {
 		return "", err
 	}

@@ -6,6 +6,7 @@ package web
 import (
 	"embed"
 	"html/template"
+	"log/slog"
 	"net/http"
 )
 
@@ -61,7 +62,9 @@ func (r *Renderer) Redirect(w http.ResponseWriter, v RedirectView) error {
 
 // Error renders an error page.
 func (r *Renderer) Error(w http.ResponseWriter, status int, message string) {
-	_ = r.render(w, status, "error.html", map[string]any{"Message": message})
+	if err := r.render(w, status, "error.html", map[string]any{"Message": message}); err != nil {
+		slog.Error("failed to render error page", "err", err)
+	}
 }
 
 func (r *Renderer) render(w http.ResponseWriter, status int, name string, data any) error {

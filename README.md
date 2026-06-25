@@ -36,48 +36,47 @@ Nuts node version.
 
 ## Configuration
 
-All configuration is via environment variables.
+Configuration is loaded with [koanf](https://github.com/knadh/koanf), layered
+(later overrides earlier): built-in defaults, an optional YAML file
+(`CIS_CONFIGFILE`), then `CIS_*` environment variables. All variables are
+namespaced with the `CIS_` (Credential ISsuer) prefix; the YAML keys are the
+lower-case names without the prefix (e.g. `CIS_NUTS_NODE_URL` → `nuts_node_url`).
 
-Config is loaded with [koanf](https://github.com/knadh/koanf).
+| Variable | YAML key | Default | Description |
+|----------|----------|---------|-------------|
+| `CIS_CONFIGFILE` | — | *(none)* | Path to an optional YAML config file |
+| `CIS_LISTEN_ADDR` | `listen_addr` | `:8080` | HTTP listen address |
+| `CIS_TITLE` | `title` | `Nuts Credential Issuer` | Issuer display name shown in the UI |
+| `CIS_BASE_URL` | `base_url` | `http://localhost:8080` | Credential Issuer Identifier and base for the authorize/token/credential/nonce endpoints |
+| `CIS_ISSUER_SUBJECT` | `issuer_subject` | `issuer` | Nuts subject the issuer issues from; its `did:web` is resolved from the node at runtime. Create it in Nuts Admin |
+| `CIS_NUTS_NODE_URL` | `nuts_node_url` | `http://localhost:8081` | Nuts node internal API base URL |
+| `CIS_DEMO` | `demo` | `false` | Enable the fake eHerkenning authenticator (required — no other authenticator exists yet). Also allows plain-HTTP `did:web` resolution |
+| `CIS_DEMO_ORG_NAME` | `demo_org_name` | `Voorbeeld Dienstverlener B.V.` | Default legal name in the (editable) demo login |
+| `CIS_DEMO_ORG_IDENTIFIER` | `demo_org_identifier` | `90000001` | Default KvK/identifier in the (editable) demo login |
 
-All variables are namespaced with the `CIS_` (Credential ISsuer) prefix.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CIS_LISTEN_ADDR` | `:8080` | HTTP listen address |
-| `CIS_TITLE` | `Nuts Credential Issuer` | Issuer display name shown in the UI |
-| `CIS_BASE_URL` | `http://localhost:8080` | Credential Issuer Identifier and base for the authorize/token/credential/nonce endpoints |
-| `CIS_ISSUER_SUBJECT` | `issuer` | Nuts subject the issuer issues from; its `did:web` is resolved from the node at runtime. Create it in Nuts Admin |
-| `CIS_NUTS_NODE_URL` | `http://localhost:8081` | Nuts node internal API base URL |
-| `CIS_DEMO` | `false` | Enable the fake eHerkenning authenticator (required — no other authenticator exists yet). Also allows plain-HTTP `did:web` resolution |
-| `CIS_DEMO_ORG_NAME` | `Voorbeeld Dienstverlener B.V.` | Default legal name in the (editable) demo login |
-| `CIS_DEMO_ORG_IDENTIFIER` | `90000001` | Default KvK/identifier in the (editable) demo login |
-| `CIS_BROWSER_CALLBACK_REWRITE` | *(none)* | `from=to` host rewrite for the wallet callback in the browser redirect, when the node's `NUTS_URL` is not browser-reachable (e.g. `nutsnode:8080=localhost:8080`) |
-
-The credential validity is intrinsic to the credential type (1 year), not configurable.
+The credential validity (1 year) and revocability (StatusList2021) are intrinsic
+to the credential type, not configurable.
 
 The issuer DID is not configured directly: it is resolved from `CIS_ISSUER_SUBJECT`
-via the Nuts node, so no DID or key material lives in the application. The
-`@context` and `services` are intrinsic to the `ServiceProviderCredential` type
-(`internal/credentials`), not configurable. The issuing Nuts node must map the GIS
-`@context` to the GIS JSON-LD context document.
+via the Nuts node, so no DID or key material lives in the application.
 
 ## Authentication is swappable
 
 Authentication sits behind the `auth.Authenticator` interface: the authenticator
-renders its own login UI (`Start`) and registers its own HTTP handlers
-(`RegisterRoutes`), calling back into the issuer once the user is authenticated.
-The demo ships a **fake eHerkenning** authenticator (`internal/auth/eherkenning`)
-with an editable login form. It performs **no identity verification**; the issuer
-refuses to start unless `DEMO=true`, so it can never be the default in a hosted
-deployment. Real authentication can be added behind the same interface without
-touching the OpenID4VCI core.
+registers its own HTTP handlers (`RegisterRoutes`, login page + submission) and
+calls back into the issuer (`auth.Result`, passed at construction) once the user
+is authenticated. The demo ships a **fake eHerkenning** authenticator
+(`internal/auth/eherkenning`) with an editable login form. It performs **no
+identity verification**; the issuer refuses to start unless `CIS_DEMO=true`, so it
+can never be the default in a hosted deployment. Real authentication can be added
+behind the same interface without touching the OpenID4VCI core.
 
 ## Adding another credential type
 
 Credential building is a self-contained unit (`internal/credentials`). A second
-type can be added there without generalising into a runtime-configurable
-registry — that is intentionally out of scope for v1.
+type can be added there without a runtime-configurable registry. Such a registry
+may be added later if more credential types are needed; it is simply not required
+for v1.
 
 ## Local stack (Docker Compose)
 

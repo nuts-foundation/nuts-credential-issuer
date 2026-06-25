@@ -1,10 +1,10 @@
 # Local demo stack for the nuts-credential-issuer.
 #
-# Topology (no /etc/hosts changes needed):
+# Topology:
 #   - Server-to-server calls use Docker service names (nutsnode, issuer).
-#   - The one browser-facing URL (the OAuth authorization endpoint) uses
-#     localhost, and the request script rewrites the node's callback host to
-#     localhost as well. So everything is reachable from the host.
+#   - The `make request` script rewrites those hosts to localhost for its own
+#     host-side calls. `make demo` opens a real browser and needs a
+#     `127.0.0.1 nutsnode` entry in /etc/hosts for the wallet callback.
 #
 # Usage:
 #   make up        # start node + admin, provision DIDs, start issuer
@@ -14,6 +14,8 @@
 services:
   nutsnode:
     image: nutsfoundation/nuts-node:project-gf-pilot
+    # project-gf-pilot is a moving tag; always pull the latest build.
+    pull_policy: always
     environment:
       NUTS_CONFIGFILE: /nuts/nuts.yaml
       NUTS_VERBOSITY: debug

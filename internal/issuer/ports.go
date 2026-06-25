@@ -18,5 +18,5 @@ type Minter interface {
 
 // SubjectResolver resolves the issuer's did:web from its Nuts subject.
 type SubjectResolver interface {
-	SubjectDID(ctx context.Context, subject string) (string, error)
+	ResolveDID(ctx context.Context, subject string) (string, error)
 }

@@ -38,11 +38,11 @@ func (c *Client) url(elem ...string) string {
 	return u
 }
 
-// SubjectDID returns the did:web of a Nuts subject, looked up via
+// ResolveDID returns the did:web of a Nuts subject, looked up via
 // GET /internal/vdr/v2/subject/{subject}. The issuer uses this to resolve its own
 // issuer DID from a configured subject name, so no DID is hardcoded. It errors if
 // the subject has no did:web, or more than one (ambiguous).
-func (c *Client) SubjectDID(ctx context.Context, subject string) (string, error) {
+func (c *Client) ResolveDID(ctx context.Context, subject string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url("internal/vdr/v2/subject", subject), nil)
 	if err != nil {
 		return "", err
@@ -89,6 +89,9 @@ type issueVCRequest struct {
 	// Format selects the proof format. We use "jwt_vc"; the node then returns
 	// the credential as a JSON-encoded JWT string.
 	Format string `json:"format,omitempty"`
+	// WithStatusList2021Revocation adds a StatusList2021 credentialStatus so the
+	// credential can be revoked (only valid for did:web issuers).
+	WithStatusList2021Revocation bool `json:"withStatusList2021Revocation,omitempty"`
 }
 
 // Mint mints a verifiable credential via the Nuts node, mapping the neutral
@@ -97,12 +100,13 @@ type issueVCRequest struct {
 // format "jwt_vc"), ready to embed in an OpenID4VCI credential response.
 func (c *Client) Mint(ctx context.Context, cred credentials.Credential) (json.RawMessage, error) {
 	body := issueVCRequest{
-		Context:           cred.Context,
-		Type:              cred.Type,
-		Issuer:            cred.IssuerDID,
-		CredentialSubject: cred.Subject,
-		ExpirationDate:    cred.ExpirationDate,
-		Format:            cred.Format,
+		Context:                      cred.Context,
+		Type:                         cred.Type,
+		Issuer:                       cred.IssuerDID,
+		CredentialSubject:            cred.Subject,
+		ExpirationDate:               cred.ExpirationDate,
+		Format:                       cred.Format,
+		WithStatusList2021Revocation: cred.Revocable,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

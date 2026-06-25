@@ -88,18 +88,19 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Result, error) {
 
 	// Verify signature + claims. aud must be the Credential Issuer Identifier;
 	// iat must be present; exp is not required.
-	if _, err := jwt.Parse([]byte(token),
+	verified, err := jwt.Parse([]byte(token),
 		jwt.WithKey(alg, key),
 		jwt.WithValidate(true),
 		jwt.WithAudience(v.audience),
 		jwt.WithRequiredClaim(jwt.IssuedAtKey),
 		jwt.WithAcceptableSkew(5*time.Second),
 		jwt.WithClock(jwt.ClockFunc(v.now)),
-	); err != nil {
+	)
+	if err != nil {
 		return Result{}, fmt.Errorf("proof verification failed: %w", err)
 	}
 
-	nonce, err := nonceClaim(token)
+	nonce, err := nonceClaim(verified)
 	if err != nil {
 		return Result{}, err
 	}
@@ -111,9 +112,11 @@ func (v *Verifier) resolveKey(ctx context.Context, holderDID string, kid did.DID
 	if err != nil {
 		return nil, err
 	}
-	vm := doc.VerificationMethod.FindByID(kid)
+	// Prefer the assertionMethod relationship (the proof asserts a credential),
+	// falling back to the general verificationMethod set.
+	vm := doc.AssertionMethod.FindByID(kid)
 	if vm == nil {
-		vm = doc.AssertionMethod.FindByID(kid)
+		vm = doc.VerificationMethod.FindByID(kid)
 	}
 	if vm == nil {
 		return nil, fmt.Errorf("verification method %s not found in DID document", kid.String())
@@ -125,12 +128,8 @@ func (v *Verifier) resolveKey(ctx context.Context, holderDID string, kid did.DID
 	return key, nil
 }
 
-func nonceClaim(token string) (string, error) {
-	parsed, err := jwt.Parse([]byte(token), jwt.WithVerify(false), jwt.WithValidate(false))
-	if err != nil {
-		return "", fmt.Errorf("parse proof claims: %w", err)
-	}
-	raw, ok := parsed.Get("nonce")
+func nonceClaim(token jwt.Token) (string, error) {
+	raw, ok := token.Get("nonce")
 	if !ok {
 		return "", fmt.Errorf("proof is missing nonce claim")
 	}

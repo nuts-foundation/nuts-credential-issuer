@@ -16,4 +16,7 @@ type Credential struct {
 	ExpirationDate string
 	// Format is the proof format (e.g. "jwt_vc").
 	Format string
+	// Revocable adds a StatusList2021 credentialStatus so the credential can be
+	// revoked after issuance (only valid for did:web issuers).
+	Revocable bool
 }

@@ -62,5 +62,7 @@ func BuildServiceProviderCredential(issuerDID string, sp ServiceProvider, now ti
 		},
 		ExpirationDate: now.Add(serviceProviderValidity).UTC().Format(time.RFC3339),
 		Format:         "jwt_vc",
+		// Issue with a StatusList2021 credentialStatus so it can be revoked.
+		Revocable: true,
 	}
 }

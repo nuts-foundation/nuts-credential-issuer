@@ -4,10 +4,13 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
+	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
+	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 )
 
@@ -38,9 +41,11 @@ type Config struct {
 	DemoOrgIdentifier string `koanf:"demo_org_identifier"`
 }
 
-// Load reads the configuration from CIS_* environment variables and validates it.
+// Load reads the configuration and validates it. Values are layered, later
+// overriding earlier: struct defaults, then an optional YAML file (path in
+// CIS_CONFIGFILE), then CIS_* environment variables.
 func Load() (Config, error) {
-	// Defaults live in the struct; environment values override them.
+	// Defaults live in the struct; the YAML file and environment override them.
 	cfg := Config{
 		ListenAddr:        ":8080",
 		Title:             "Nuts Credential Issuer",
@@ -51,8 +56,14 @@ func Load() (Config, error) {
 		DemoOrgIdentifier: "90000001",
 	}
 
-	// CIS_NUTS_NODE_URL -> nuts_node_url, matching the koanf field tags.
 	k := koanf.New(".")
+	// Optional YAML file. Its keys are the koanf field tags (e.g. nuts_node_url).
+	if path := os.Getenv("CIS_CONFIGFILE"); path != "" {
+		if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
+			return Config{}, fmt.Errorf("load config file %q: %w", path, err)
+		}
+	}
+	// Environment overrides the file. CIS_NUTS_NODE_URL -> nuts_node_url.
 	if err := k.Load(env.Provider("CIS_", ".", func(s string) string {
 		return strings.ToLower(strings.TrimPrefix(s, "CIS_"))
 	}), nil); err != nil {

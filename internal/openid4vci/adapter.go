@@ -110,8 +110,9 @@ func (a *Adapter) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthErr(w, http.StatusBadRequest, "unsupported_response_type", "response_type must be code")
 		return
 	}
-	if q.Get("redirect_uri") == "" || q.Get("state") == "" || q.Get("code_challenge") == "" {
-		oauthErr(w, http.StatusBadRequest, "invalid_request", "redirect_uri, state and code_challenge are required")
+	// state is RECOMMENDED, not required, by OAuth 2.0; we echo it back when given.
+	if q.Get("redirect_uri") == "" || q.Get("code_challenge") == "" {
+		oauthErr(w, http.StatusBadRequest, "invalid_request", "redirect_uri and code_challenge are required")
 		return
 	}
 	if q.Get("code_challenge_method") != "S256" {
@@ -159,7 +160,7 @@ func (a *Adapter) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 func (a *Adapter) OnAuthenticated(w http.ResponseWriter, r *http.Request, attrs auth.Attributes) {
 	sess, ok := a.store.get(sessionFromCookie(r))
 	if !ok {
-		a.opts.Renderer.Error(w, http.StatusBadRequest, "onbekende of verlopen sessie")
+		a.renderError(w, http.StatusBadRequest, "onbekende of verlopen sessie")
 		return
 	}
 	details, err := a.opts.Service.Authenticate(sess.issuance, issuance.Organization{
@@ -179,18 +180,18 @@ func (a *Adapter) OnAuthenticated(w http.ResponseWriter, r *http.Request, attrs 
 		RecipientDetail: details.Recipient.Detail,
 		Services:        strings.Join(details.Services, ", "),
 	}); err != nil {
-		a.opts.Renderer.Error(w, http.StatusInternalServerError, "kan toestemmingsscherm niet tonen")
+		a.renderError(w, http.StatusInternalServerError, "kan toestemmingsscherm niet tonen")
 	}
 }
 
 func (a *Adapter) handleConsent(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		a.opts.Renderer.Error(w, http.StatusBadRequest, "ongeldig formulier")
+		a.renderError(w, http.StatusBadRequest, "ongeldig formulier")
 		return
 	}
 	sess, ok := a.store.get(sessionFromCookie(r))
 	if !ok {
-		a.opts.Renderer.Error(w, http.StatusBadRequest, "onbekende of verlopen sessie")
+		a.renderError(w, http.StatusBadRequest, "onbekende of verlopen sessie")
 		return
 	}
 	if err := a.opts.Service.Consent(sess.issuance, splitServices(r.FormValue("services"))); err != nil {
@@ -202,7 +203,7 @@ func (a *Adapter) handleConsent(w http.ResponseWriter, r *http.Request) {
 	a.store.bindCode(code, sess.id())
 
 	if err := a.opts.Renderer.Redirect(w, web.RedirectView{Action: sess.redirectURI, Code: code, State: sess.state}); err != nil {
-		a.opts.Renderer.Error(w, http.StatusInternalServerError, "kan doorverwijzing niet tonen")
+		a.renderError(w, http.StatusInternalServerError, "kan doorverwijzing niet tonen")
 	}
 }
 
@@ -298,14 +299,19 @@ func (a *Adapter) handleCredential(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// renderError shows a generic HTML error page with a user-facing message.
+func (a *Adapter) renderError(w http.ResponseWriter, status int, message string) {
+	a.opts.Renderer.Error(w, status, message)
+}
+
 // renderServiceError logs the error and shows a generic HTML error page. The
 // detail is never returned to the client.
 // TODO(#2): expose the detail only in non-strict mode.
 func (a *Adapter) renderServiceError(w http.ResponseWriter, err error) {
 	if errors.Is(err, issuance.ErrInvalidState) {
-		a.opts.Renderer.Error(w, http.StatusBadRequest, "ongeldige stap in de sessie")
+		a.renderError(w, http.StatusBadRequest, "ongeldige stap in de sessie")
 		return
 	}
 	slog.Error("issuance step failed", "err", err)
-	a.opts.Renderer.Error(w, http.StatusInternalServerError, "er is iets misgegaan")
+	a.renderError(w, http.StatusInternalServerError, "er is iets misgegaan")
 }
