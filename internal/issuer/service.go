@@ -6,19 +6,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuance"
 )
 
+// configID is the single credential_configuration_id this issuer offers. It is
+// hardcoded, like the credential it maps to.
+const configID = credentials.ServiceProviderCredentialType
+
 // Config holds the issuer's non-port settings.
 type Config struct {
 	// IssuerSubject is the Nuts subject whose did:web the credential is issued from.
 	IssuerSubject string
-	// ConfigID is the single credential_configuration_id this issuer offers.
-	ConfigID string
 }
 
 // Service orchestrates the issuance use-cases over the domain and the ports. It
@@ -30,7 +31,6 @@ type Service struct {
 	now      func() time.Time
 	cfg      Config
 
-	didMu     sync.Mutex
 	issuerDID string // cached resolution of cfg.IssuerSubject
 }
 
@@ -43,7 +43,7 @@ func NewService(minter Minter, subjects SubjectResolver, now func() time.Time, c
 }
 
 // CredentialType returns the credential configuration id this issuer offers.
-func (s *Service) CredentialType() string { return s.cfg.ConfigID }
+func (s *Service) CredentialType() string { return configID }
 
 // Start validates the request and creates a new issuance aggregate.
 func (s *Service) Start(p StartParams) (*issuance.Issuance, error) {
@@ -59,8 +59,8 @@ func (s *Service) Start(p StartParams) (*issuance.Issuance, error) {
 }
 
 func (s *Service) resolveConfigID(requested string) (string, error) {
-	if requested == "" || requested == s.cfg.ConfigID {
-		return s.cfg.ConfigID, nil
+	if requested == "" || requested == configID {
+		return configID, nil
 	}
 	return "", fmt.Errorf("%w: %q", ErrUnsupportedCredential, requested)
 }
@@ -71,10 +71,11 @@ func (s *Service) Authenticate(iss *issuance.Issuance, org issuance.Organization
 	if err := iss.Authenticate(org); err != nil {
 		return ConsentDetails{}, err
 	}
+	snap := iss.Snapshot()
 	return ConsentDetails{
-		Organization:   org,
-		Recipient:      iss.Recipient(),
-		CredentialType: iss.ConfigID(),
+		Organization:   snap.Organization,
+		Recipient:      snap.Recipient,
+		CredentialType: snap.ConfigID,
 		Services:       credentials.DefaultServiceProviderServices,
 	}, nil
 }
@@ -90,10 +91,11 @@ func (s *Service) Issue(ctx context.Context, iss *issuance.Issuance, holderDID s
 	if err != nil {
 		return nil, fmt.Errorf("resolve issuer DID: %w", err)
 	}
+	snap := iss.Snapshot()
 	cred := credentials.BuildServiceProviderCredential(issuerDID, credentials.ServiceProvider{
 		DID:       holderDID,
-		LegalName: iss.Organization().LegalName,
-		Services:  iss.Services(),
+		LegalName: snap.Organization.LegalName,
+		Services:  snap.Services,
 	}, s.now())
 
 	vc, err := s.minter.Mint(ctx, cred)
@@ -108,9 +110,9 @@ func (s *Service) Issue(ctx context.Context, iss *issuance.Issuance, holderDID s
 
 // resolveIssuerDID resolves and caches the issuer DID from its Nuts subject. It
 // is resolved lazily so the subject may be created (via Nuts Admin) after start.
+// Resolving concurrently more than once is harmless (the result is the same), so
+// no locking is used.
 func (s *Service) resolveIssuerDID(ctx context.Context) (string, error) {
-	s.didMu.Lock()
-	defer s.didMu.Unlock()
 	if s.issuerDID != "" {
 		return s.issuerDID, nil
 	}

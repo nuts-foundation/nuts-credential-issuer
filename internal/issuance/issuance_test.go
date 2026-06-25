@@ -25,8 +25,9 @@ func TestHappyPathTransitions(t *testing.T) {
 	if err := i.Issue("did:web:holder"); err != nil {
 		t.Fatal(err)
 	}
-	if i.Organization().LegalName != "Acme" || len(i.Services()) != 1 || i.HolderDID() != "did:web:holder" {
-		t.Errorf("state not retained: %+v %v %q", i.Organization(), i.Services(), i.HolderDID())
+	snap := i.Snapshot()
+	if snap.Organization.LegalName != "Acme" || len(snap.Services) != 1 || snap.HolderDID != "did:web:holder" || snap.Status != Issued {
+		t.Errorf("state not retained: %+v", snap)
 	}
 }
 

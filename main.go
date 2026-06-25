@@ -17,7 +17,6 @@ import (
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth/eherkenning"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/config"
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/didweb"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/nutsclient"
@@ -61,20 +60,17 @@ func main() {
 	// Application service (protocol-agnostic).
 	service := issuer.NewService(nuts, nuts, time.Now, issuer.Config{
 		IssuerSubject: cfg.IssuerSubject,
-		ConfigID:      credentials.ServiceProviderCredentialType,
 	})
 
 	// Inbound HTTP adapter (owns the OAuth/OpenID4VCI protocol and session state).
 	adapter, err := openid4vci.New(openid4vci.Options{
-		BaseURL:             cfg.BaseURL,
-		Service:             service,
-		Renderer:            renderer,
-		Proofs:              verifier,
-		LoginPath:           eherkenning.LoginPath,
-		CallbackRewriteFrom: cfg.CallbackRewriteFrom,
-		CallbackRewriteTo:   cfg.CallbackRewriteTo,
-		SessionTTL:          sessionTTL,
-		Now:                 time.Now,
+		BaseURL:    cfg.BaseURL,
+		Service:    service,
+		Renderer:   renderer,
+		Proofs:     verifier,
+		LoginPath:  eherkenning.LoginPath,
+		SessionTTL: sessionTTL,
+		Now:        time.Now,
 	})
 	if err != nil {
 		slog.Error("failed to start issuer", "err", err)
@@ -90,9 +86,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Compose the HTTP routes: the app's own health check, the issuer endpoints
+	// and the authenticator's login routes.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	adapter.RegisterRoutes(mux)
+	authenticator.RegisterRoutes(mux)
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           adapter.Handler(authenticator),
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

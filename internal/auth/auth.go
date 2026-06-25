@@ -21,8 +21,9 @@ type Attributes struct {
 
 // Result is invoked once the user is authenticated. The issuer supplies it at
 // the authenticator's construction to continue the flow (bind the attributes to
-// the session and show consent). session is the OpenID4VCI session id.
-type Result func(w http.ResponseWriter, r *http.Request, session string, attrs Attributes)
+// the session and show consent). The session is carried out-of-band (a cookie set
+// by the issuer), so the authenticator does not handle it.
+type Result func(w http.ResponseWriter, r *http.Request, attrs Attributes)
 
 // Authenticator authenticates the user interactively. It mounts its own HTTP
 // handlers (login page + submission) on mux.

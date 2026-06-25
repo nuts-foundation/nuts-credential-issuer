@@ -10,7 +10,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -44,15 +43,15 @@ type Options struct {
 	// LoginPath is the authenticator's login route; the adapter redirects the user
 	// there to begin authentication.
 	LoginPath string
-	// CallbackRewriteFrom/To rewrite the host of the wallet's callback URL only
-	// when rendering the browser redirect, so a browser can reach a node whose
-	// NUTS_URL is an internal hostname.
-	CallbackRewriteFrom string
-	CallbackRewriteTo   string
 	// SessionTTL bounds in-flight sessions and c_nonces; reported as expires_in.
 	SessionTTL time.Duration
 	Now        func() time.Time
 }
+
+// sessionCookie carries the in-flight session id through the authentication and
+// consent steps. It is HttpOnly; the Secure flag for strict (HTTPS) mode is a
+// follow-up (the demo runs over plain HTTP). See issue #2.
+const sessionCookie = "cis_session"
 
 // Adapter serves the OpenID4VCI HTTP endpoints.
 type Adapter struct {
@@ -85,13 +84,9 @@ func New(opts Options) (*Adapter, error) {
 // Close stops the background session reaper.
 func (a *Adapter) Close() { a.store.close() }
 
-// Handler returns the HTTP handler exposing all issuer endpoints. The
-// authenticator mounts its own routes (login page + submission) on the same mux.
-func (a *Adapter) Handler(authn auth.Authenticator) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
+// RegisterRoutes mounts the OpenID4VCI endpoints on mux. The authenticator
+// mounts its own routes (login page + submission) on the same mux separately.
+func (a *Adapter) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", a.handleIssuerMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", a.handleASMetadata)
 	mux.HandleFunc("GET /authorize", a.handleAuthorize)
@@ -99,8 +94,6 @@ func (a *Adapter) Handler(authn auth.Authenticator) http.Handler {
 	mux.HandleFunc("POST /token", a.handleToken)
 	mux.HandleFunc("POST /nonce", a.handleNonce)
 	mux.HandleFunc("POST /credential", a.handleCredential)
-	authn.RegisterRoutes(mux)
-	return mux
 }
 
 func (a *Adapter) handleIssuerMetadata(w http.ResponseWriter, _ *http.Request) {
@@ -147,15 +140,24 @@ func (a *Adapter) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		codeChallenge: q.Get("code_challenge"),
 	})
 
-	// Hand off to the authenticator's login route, carrying the session id.
-	http.Redirect(w, r, a.opts.LoginPath+"?session="+url.QueryEscape(iss.ID()), http.StatusFound)
+	// Bind the browser to the session via an HttpOnly cookie and hand off to the
+	// authenticator's login route.
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    iss.ID(),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(a.opts.SessionTTL.Seconds()),
+	})
+	http.Redirect(w, r, a.opts.LoginPath, http.StatusFound)
 }
 
 // OnAuthenticated is the auth.Result callback: once the authenticator has
-// authenticated the user it advances the issuance and renders consent. Wire it
-// into the authenticator at construction.
-func (a *Adapter) OnAuthenticated(w http.ResponseWriter, _ *http.Request, sessionID string, attrs auth.Attributes) {
-	sess, ok := a.store.get(sessionID)
+// authenticated the user it advances the issuance (found via the session cookie)
+// and renders consent. Wire it into the authenticator at construction.
+func (a *Adapter) OnAuthenticated(w http.ResponseWriter, r *http.Request, attrs auth.Attributes) {
+	sess, ok := a.store.get(sessionFromCookie(r))
 	if !ok {
 		a.opts.Renderer.Error(w, http.StatusBadRequest, "onbekende of verlopen sessie")
 		return
@@ -169,7 +171,6 @@ func (a *Adapter) OnAuthenticated(w http.ResponseWriter, _ *http.Request, sessio
 		return
 	}
 	if err := a.opts.Renderer.Consent(w, web.ConsentView{
-		SessionID:       sessionID,
 		PostPath:        "/consent",
 		CredentialType:  details.CredentialType,
 		OrgName:         details.Organization.LegalName,
@@ -187,7 +188,7 @@ func (a *Adapter) handleConsent(w http.ResponseWriter, r *http.Request) {
 		a.opts.Renderer.Error(w, http.StatusBadRequest, "ongeldig formulier")
 		return
 	}
-	sess, ok := a.store.get(r.FormValue("session"))
+	sess, ok := a.store.get(sessionFromCookie(r))
 	if !ok {
 		a.opts.Renderer.Error(w, http.StatusBadRequest, "onbekende of verlopen sessie")
 		return
@@ -200,13 +201,7 @@ func (a *Adapter) handleConsent(w http.ResponseWriter, r *http.Request) {
 	sess.code = code
 	a.store.bindCode(code, sess.id())
 
-	// Keep the original redirect_uri for the /token check; only rewrite the
-	// browser-facing action to a host the browser can resolve.
-	action := sess.redirectURI
-	if a.opts.CallbackRewriteFrom != "" {
-		action = strings.ReplaceAll(action, a.opts.CallbackRewriteFrom, a.opts.CallbackRewriteTo)
-	}
-	if err := a.opts.Renderer.Redirect(w, web.RedirectView{Action: action, Code: code, State: sess.state}); err != nil {
+	if err := a.opts.Renderer.Redirect(w, web.RedirectView{Action: sess.redirectURI, Code: code, State: sess.state}); err != nil {
 		a.opts.Renderer.Error(w, http.StatusInternalServerError, "kan doorverwijzing niet tonen")
 	}
 }
@@ -278,6 +273,14 @@ func (a *Adapter) handleCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	if !a.store.consumeNonce(res.Nonce) {
 		oauthErr(w, http.StatusBadRequest, "invalid_proof", "nonce is missing, unknown or expired")
+		return
+	}
+
+	// Bind the issued-to DID (from the proof) to the wallet the user consented to
+	// (derived from client_id): they must share a host, so we never issue to a
+	// different party than the one shown on the consent screen.
+	if holderHost, _ := parseRecipient(res.HolderDID); holderHost != sess.issuance.Snapshot().Recipient.Host {
+		oauthErr(w, http.StatusBadRequest, "invalid_proof", "credential subject does not match the authenticated client")
 		return
 	}
 

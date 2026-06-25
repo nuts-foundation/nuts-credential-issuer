@@ -47,9 +47,6 @@ services:
       CIS_NUTS_NODE_URL: "http://nutsnode:8081"
       # Demo mode enables the fake eHerkenning login and plain-HTTP did:web resolution.
       CIS_DEMO: "true"
-      # The node's callback URL uses the internal hostname (NUTS_URL=nutsnode:8080);
-      # rewrite it to localhost so a browser can reach it during the interactive demo.
-      CIS_BROWSER_CALLBACK_REWRITE: "nutsnode:8080=localhost:8080"
     ports:
       - "8088:8088"
     depends_on:

@@ -85,7 +85,6 @@
           <span><b>Demo &mdash; geen echte eHerkenning.</b> Er vindt geen identiteitscontrole plaats. Pas de gegevens hieronder aan om als een andere organisatie in te loggen.</span>
         </div>
         <form method="post" action="{{.Action}}">
-          <input type="hidden" name="session" value="{{.Session}}">
           <div class="field">
             <label for="legal_name">Organisatie (statutaire naam)</label>
             <input id="legal_name" name="legal_name" value="{{.LegalName}}" autocomplete="organization">

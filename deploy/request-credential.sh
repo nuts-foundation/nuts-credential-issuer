@@ -37,20 +37,24 @@ authorize_url=$(echo "$start" | python3 -c "import sys,json;print(json.load(sys.
 # The issuer pages are served at localhost; make sure we call them there.
 authorize_url=${authorize_url//$ISSUER_SERVER/$ISSUER_LOCAL}
 
+# The issuer binds the session to an HttpOnly cookie set on /authorize, so use a
+# cookie jar across the login and consent steps.
+JAR=$(mktemp)
+trap 'rm -f "$JAR"' EXIT
+
 echo "2. Opening the issuer login page ..."
-login=$(curl -sfL "$authorize_url") # -L: /authorize redirects to the login page
-session=$(echo "$login" | extract 'name="session" value="[^"]+"' '.*value="([^"]+)".*')
-[ -n "$session" ] || { echo "could not find session on login page"; echo "$login"; exit 1; }
+# -L follows /authorize's redirect to the login page; -c/-b persist the cookie.
+curl -sfL -c "$JAR" -b "$JAR" "$authorize_url" >/dev/null
 
 echo "3. Logging in (fake eHerkenning${LEGAL_NAME:+ as \"$LEGAL_NAME\"}) ..."
-login_data="session=$session"
+login_data=""
 if [ -n "$LEGAL_NAME" ]; then
-  login_data="$login_data&legal_name=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$LEGAL_NAME")"
+  login_data="legal_name=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$LEGAL_NAME")"
 fi
-curl -sf -X POST "$ISSUER_LOCAL/login" -d "$login_data" >/dev/null
+curl -sf -c "$JAR" -b "$JAR" -X POST "$ISSUER_LOCAL/login" -d "$login_data" >/dev/null
 
 echo "4. Consenting to issuance ..."
-redir=$(curl -sf -X POST "$ISSUER_LOCAL/consent" -d "session=$session")
+redir=$(curl -sf -c "$JAR" -b "$JAR" -X POST "$ISSUER_LOCAL/consent")
 action=$(echo "$redir" | extract 'action="[^"]+"' 'action="([^"]+)"')
 code=$(echo "$redir" | extract 'name="code" value="[^"]+"' '.*value="([^"]+)".*')
 state=$(echo "$redir" | extract 'name="state" value="[^"]+"' '.*value="([^"]+)".*')

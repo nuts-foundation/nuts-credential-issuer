@@ -49,6 +49,9 @@ echo "Open this URL in your browser, log in and consent:"
 echo
 echo "    $authorize_url"
 echo
+echo "Note: after consent the wallet callback uses the 'nutsnode' hostname."
+echo "Add '127.0.0.1 nutsnode' to /etc/hosts so your browser can reach it."
+echo
 opener=$(command -v open || command -v xdg-open || true)
 if [ -n "$opener" ]; then
   "$opener" "$authorize_url" >/dev/null 2>&1 || true

@@ -37,19 +37,23 @@ type Recipient struct {
 	Detail string
 }
 
+// Snapshot is a point-in-time copy of an Issuance's data.
+type Snapshot struct {
+	ID        string
+	ConfigID  string
+	Recipient Recipient
+	Status    Status
+	CreatedAt time.Time
+
+	Organization Organization
+	Services     []string
+	HolderDID    string
+}
+
 // Issuance is the aggregate root of one issuance flow.
 type Issuance struct {
-	mu sync.Mutex
-
-	id        string
-	configID  string
-	recipient Recipient
-	createdAt time.Time
-
-	status    Status
-	org       Organization
-	services  []string
-	holderDID string
+	mu   sync.Mutex
+	snap Snapshot
 }
 
 // Params are the immutable inputs captured when an issuance starts.
@@ -61,13 +65,13 @@ type Params struct {
 
 // New starts a new issuance awaiting authentication.
 func New(p Params, now time.Time) *Issuance {
-	return &Issuance{
-		id:        p.ID,
-		configID:  p.ConfigID,
-		recipient: p.Recipient,
-		createdAt: now,
-		status:    AwaitingAuthentication,
-	}
+	return &Issuance{snap: Snapshot{
+		ID:        p.ID,
+		ConfigID:  p.ConfigID,
+		Recipient: p.Recipient,
+		Status:    AwaitingAuthentication,
+		CreatedAt: now,
+	}}
 }
 
 // Authenticate records the authenticated organisation
@@ -75,11 +79,11 @@ func New(p Params, now time.Time) *Issuance {
 func (i *Issuance) Authenticate(org Organization) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.status != AwaitingAuthentication {
+	if i.snap.Status != AwaitingAuthentication {
 		return ErrInvalidState
 	}
-	i.org = org
-	i.status = AwaitingConsent
+	i.snap.Organization = org
+	i.snap.Status = AwaitingConsent
 	return nil
 }
 
@@ -87,11 +91,11 @@ func (i *Issuance) Authenticate(org Organization) error {
 func (i *Issuance) Consent(services []string) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.status != AwaitingConsent {
+	if i.snap.Status != AwaitingConsent {
 		return ErrInvalidState
 	}
-	i.services = services
-	i.status = Consented
+	i.snap.Services = services
+	i.snap.Status = Consented
 	return nil
 }
 
@@ -99,30 +103,33 @@ func (i *Issuance) Consent(services []string) error {
 func (i *Issuance) Issue(holderDID string) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.status != Consented {
+	if i.snap.Status != Consented {
 		return ErrInvalidState
 	}
-	i.holderDID = holderDID
-	i.status = Issued
+	i.snap.HolderDID = holderDID
+	i.snap.Status = Issued
 	return nil
 }
 
-// Accessors. Each takes the lock so reads are consistent with transitions.
-
-func (i *Issuance) ID() string           { i.mu.Lock(); defer i.mu.Unlock(); return i.id }
-func (i *Issuance) ConfigID() string     { i.mu.Lock(); defer i.mu.Unlock(); return i.configID }
-func (i *Issuance) Recipient() Recipient { i.mu.Lock(); defer i.mu.Unlock(); return i.recipient }
-func (i *Issuance) HolderDID() string    { i.mu.Lock(); defer i.mu.Unlock(); return i.holderDID }
-func (i *Issuance) CreatedAt() time.Time { i.mu.Lock(); defer i.mu.Unlock(); return i.createdAt }
-func (i *Issuance) Organization() Organization {
+// Snapshot returns a copy of the issuance's data.
+func (i *Issuance) Snapshot() Snapshot {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	return i.org
+	s := i.snap
+	s.Services = append([]string(nil), i.snap.Services...)
+	return s
 }
 
-// Services returns a copy of the chosen services.
-func (i *Issuance) Services() []string {
+// ID returns the issuance id (the in-flight session identity).
+func (i *Issuance) ID() string {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	return append([]string(nil), i.services...)
+	return i.snap.ID
+}
+
+// CreatedAt returns when the issuance started.
+func (i *Issuance) CreatedAt() time.Time {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.snap.CreatedAt
 }

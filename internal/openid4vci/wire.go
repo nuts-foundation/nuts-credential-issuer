@@ -101,6 +101,15 @@ func splitServices(raw string) []string {
 	return out
 }
 
+// sessionFromCookie returns the in-flight session id from the session cookie.
+func sessionFromCookie(r *http.Request) string {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
 func bearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {

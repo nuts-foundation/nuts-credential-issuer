@@ -3,6 +3,7 @@ module github.com/nuts-foundation/nuts-credential-issuer
 go 1.26.3
 
 require (
+	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/lestrrat-go/jwx/v2 v2.1.6
@@ -11,7 +12,6 @@ require (
 
 require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.3 // indirect

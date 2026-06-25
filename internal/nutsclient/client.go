@@ -38,9 +38,10 @@ func (c *Client) url(elem ...string) string {
 	return u
 }
 
-// SubjectDID returns the (first) did:web of a Nuts subject, looked up via
-// GET /internal/vdr/v2/subject/{subject}. The issuer uses this to resolve its
-// own issuer DID from a configured subject name, so no DID is hardcoded.
+// SubjectDID returns the did:web of a Nuts subject, looked up via
+// GET /internal/vdr/v2/subject/{subject}. The issuer uses this to resolve its own
+// issuer DID from a configured subject name, so no DID is hardcoded. It errors if
+// the subject has no did:web, or more than one (ambiguous).
 func (c *Client) SubjectDID(ctx context.Context, subject string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url("internal/vdr/v2/subject", subject), nil)
 	if err != nil {
@@ -51,7 +52,10 @@ func (c *Client) SubjectDID(ctx context.Context, subject string) (string, error)
 		return "", fmt.Errorf("resolve subject %q: %w", subject, err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read subject %q response: %w", subject, err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("resolve subject %q: Nuts node returned HTTP %d: %s", subject, resp.StatusCode, string(raw))
 	}
@@ -59,12 +63,20 @@ func (c *Client) SubjectDID(ctx context.Context, subject string) (string, error)
 	if err := json.Unmarshal(raw, &dids); err != nil {
 		return "", fmt.Errorf("parse subject %q DIDs: %w", subject, err)
 	}
+	var webDIDs []string
 	for _, d := range dids {
 		if strings.HasPrefix(d, "did:web:") {
-			return d, nil
+			webDIDs = append(webDIDs, d)
 		}
 	}
-	return "", fmt.Errorf("subject %q has no did:web", subject)
+	switch len(webDIDs) {
+	case 1:
+		return webDIDs[0], nil
+	case 0:
+		return "", fmt.Errorf("subject %q has no did:web", subject)
+	default:
+		return "", fmt.Errorf("subject %q has multiple did:web DIDs: %v", subject, webDIDs)
+	}
 }
 
 // issueVCRequest is the body of POST /internal/vcr/v2/issuer/vc.

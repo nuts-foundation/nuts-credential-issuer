@@ -10,7 +10,7 @@ import (
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth"
 )
 
-func noopResult(http.ResponseWriter, *http.Request, string, auth.Attributes) {}
+func noopResult(http.ResponseWriter, *http.Request, auth.Attributes) {}
 
 func TestNew_RequiresResult(t *testing.T) {
 	if _, err := New("Org", "1", "Title", nil); err == nil {
@@ -27,9 +27,9 @@ func TestStart_RendersEditableDefaults(t *testing.T) {
 	a.RegisterRoutes(mux)
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, LoginPath+"?session=sess-42", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, LoginPath, nil))
 	body := rec.Body.String()
-	for _, want := range []string{`value="sess-42"`, `value="Voorbeeld B.V."`, `value="90000001"`, `name="legal_name"`, `name="identifier"`, "Test Issuer"} {
+	for _, want := range []string{`value="Voorbeeld B.V."`, `value="90000001"`, `name="legal_name"`, `name="identifier"`, "Test Issuer"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("login page missing %q:\n%s", want, body)
 		}
@@ -37,22 +37,18 @@ func TestStart_RendersEditableDefaults(t *testing.T) {
 }
 
 func TestSubmit_UsesSubmittedValues(t *testing.T) {
-	var gotSession string
 	var gotAttrs auth.Attributes
-	a, _ := New("Default B.V.", "90000001", "T", func(w http.ResponseWriter, r *http.Request, session string, attrs auth.Attributes) {
-		gotSession, gotAttrs = session, attrs
+	a, _ := New("Default B.V.", "90000001", "T", func(w http.ResponseWriter, r *http.Request, attrs auth.Attributes) {
+		gotAttrs = attrs
 	})
 	mux := http.NewServeMux()
 	a.RegisterRoutes(mux)
 
-	form := url.Values{"session": {"sess-7"}, "legal_name": {"Andere B.V."}, "identifier": {"12345678"}}
+	form := url.Values{"legal_name": {"Andere B.V."}, "identifier": {"12345678"}}
 	req := httptest.NewRequest(http.MethodPost, LoginPath, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(httptest.NewRecorder(), req)
 
-	if gotSession != "sess-7" {
-		t.Errorf("session = %q, want sess-7", gotSession)
-	}
 	if gotAttrs.LegalName != "Andere B.V." || gotAttrs.Identifier != "12345678" {
 		t.Errorf("attrs = %+v, want submitted values", gotAttrs)
 	}
@@ -60,13 +56,13 @@ func TestSubmit_UsesSubmittedValues(t *testing.T) {
 
 func TestSubmit_FallsBackToDefaults(t *testing.T) {
 	var gotAttrs auth.Attributes
-	a, _ := New("Default B.V.", "90000001", "T", func(w http.ResponseWriter, r *http.Request, session string, attrs auth.Attributes) {
+	a, _ := New("Default B.V.", "90000001", "T", func(w http.ResponseWriter, r *http.Request, attrs auth.Attributes) {
 		gotAttrs = attrs
 	})
 	mux := http.NewServeMux()
 	a.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, LoginPath, strings.NewReader(url.Values{"session": {"s"}}.Encode()))
+	req := httptest.NewRequest(http.MethodPost, LoginPath, strings.NewReader(url.Values{}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(httptest.NewRecorder(), req)
 

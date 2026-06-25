@@ -82,10 +82,9 @@ registry — that is intentionally out of scope for v1.
 ## Local stack (Docker Compose)
 
 Runs the issuer, a Nuts node (acting as both the issuer's signing node and the
-vendor wallet), and Nuts Admin. No `/etc/hosts` changes are needed: server-to-server
-calls use Docker service names, and the demo scripts rewrite those hosts to
-`localhost` for the browser-side calls (and the issuer rewrites the node's callback
-host for the interactive browser demo).
+vendor wallet), and Nuts Admin. Server-to-server calls use Docker service names;
+the `make request` script rewrites those hosts to `localhost` for its own
+host-side calls.
 
 ```sh
 make up        # start node + admin + issuer
@@ -97,11 +96,20 @@ Then create two subjects in **Nuts Admin** (http://localhost:1305):
 - `wallet` — the vendor wallet that receives the credential
 
 ```sh
-make demo                       # interactive: opens the login page in your browser
 make request                    # headless: issue with the default demo organisation
 make request ORG="Acme B.V."    # headless: issue asserting a different organisation
+make demo                       # interactive: opens the login page in your browser
 make logs                       # follow issuer + node logs
 make down                       # stop everything
+```
+
+`make request` is the primary, fully self-contained flow. `make demo` opens a real
+browser; after consent the wallet's callback points at the node's internal
+hostname (`nutsnode`), so the browser must be able to resolve it. Add this line to
+`/etc/hosts` first:
+
+```
+127.0.0.1 nutsnode
 ```
 
 - `make demo` (`deploy/demo.sh`) starts an issuance and opens the issuer login

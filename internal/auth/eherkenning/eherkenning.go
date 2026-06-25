@@ -13,6 +13,7 @@ import (
 	"embed"
 	"errors"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -62,23 +63,24 @@ func (a *Authenticator) RegisterRoutes(mux *http.ServeMux) {
 }
 
 type loginData struct {
-	Session    string
 	Action     string
 	Title      string
 	LegalName  string
 	Identifier string
 }
 
-// handleStart renders the (editable) login page for the session in the query.
-func (a *Authenticator) handleStart(w http.ResponseWriter, r *http.Request) {
+// handleStart renders the (editable) login page. The session is carried by a
+// cookie the issuer set, so it is not handled here.
+func (a *Authenticator) handleStart(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = a.tmpl.Execute(w, loginData{
-		Session:    r.URL.Query().Get("session"),
+	if err := a.tmpl.Execute(w, loginData{
 		Action:     LoginPath,
 		Title:      a.title,
 		LegalName:  a.defaultLegalName,
 		Identifier: a.defaultIdentifier,
-	})
+	}); err != nil {
+		slog.Error("failed to render login page", "err", err)
+	}
 }
 
 // handleSubmit yields the (editable) organisation identity to the Result callback.
@@ -95,5 +97,5 @@ func (a *Authenticator) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if identifier == "" {
 		identifier = a.defaultIdentifier
 	}
-	a.result(w, r, r.FormValue("session"), auth.Attributes{LegalName: legalName, Identifier: identifier})
+	a.result(w, r, auth.Attributes{LegalName: legalName, Identifier: identifier})
 }

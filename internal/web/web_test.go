@@ -13,7 +13,6 @@ func TestConsentRendersRecipient(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	if err := r.Consent(rec, ConsentView{
-		SessionID:       "sess-1",
 		PostPath:        "/consent",
 		CredentialType:  "ServiceProviderCredential",
 		OrgName:         "Voorbeeld B.V.",
@@ -27,7 +26,7 @@ func TestConsentRendersRecipient(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"Voorbeeld B.V.", "ServiceProviderCredential", "wallet.example.nl:8080", "oauth2/wallet",
-		`name="session" value="sess-1"`, `action="/consent"`, "Test Issuer", `name="services"`,
+		`action="/consent"`, "Test Issuer", `name="services"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("consent page missing %q", want)

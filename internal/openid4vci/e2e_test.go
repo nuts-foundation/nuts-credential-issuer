@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"regexp"
@@ -36,7 +37,6 @@ import (
 	"time"
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth/eherkenning"
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/didweb"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/nutsclient"
@@ -68,7 +68,6 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 	verifier := proof.NewVerifier(didweb.New(true, nil), base, time.Now)
 	svc := issuer.NewService(nuts, nuts, time.Now, issuer.Config{
 		IssuerSubject: issuerSubject,
-		ConfigID:      credentials.ServiceProviderCredentialType,
 	})
 	adapter, err := openid4vci.New(openid4vci.Options{
 		BaseURL:    base,
@@ -87,7 +86,10 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := &http.Server{Addr: listenAddr, Handler: adapter.Handler(authenticator)}
+	mux := http.NewServeMux()
+	adapter.RegisterRoutes(mux)
+	authenticator.RegisterRoutes(mux)
+	srv := &http.Server{Addr: listenAddr, Handler: mux}
 	go func() { _ = srv.ListenAndServe() }()
 	defer srv.Close()
 	time.Sleep(200 * time.Millisecond) // let the listener come up
@@ -113,20 +115,21 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 		t.Fatalf("node did not return a redirect_uri: %s", startResp)
 	}
 
-	// 2. Act as the browser. The /authorize endpoint redirects to the login page,
-	// so this client follows redirects.
-	browser := &http.Client{Timeout: 30 * time.Second}
+	// 2. Act as the browser. /authorize redirects to the login page and sets a
+	// session cookie, so this client follows redirects and keeps cookies.
+	jar, _ := cookiejar.New(nil)
+	browser := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 	// For the final node callback we must NOT follow the redirect into the node's
 	// own redirect_uri; we just want the node to complete the exchange.
 	noFollow := &http.Client{
 		Timeout:       30 * time.Second,
+		Jar:           jar,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
-	loginHTML := httpGet(t, browser, start.RedirectURI)
-	sessionID := firstSubmatch(t, `name="session"\s+value="([^"]+)"`, loginHTML, "session id on login page")
-	httpPostForm(t, browser, issuerBaseURL+eherkenning.LoginPath, url.Values{"session": {sessionID}})
-	redirectHTML := httpPostForm(t, browser, issuerBaseURL+"/consent", url.Values{"session": {sessionID}})
+	httpGet(t, browser, start.RedirectURI) // follows the 302 to /login, setting the session cookie
+	httpPostForm(t, browser, issuerBaseURL+eherkenning.LoginPath, url.Values{})
+	redirectHTML := httpPostForm(t, browser, issuerBaseURL+"/consent", url.Values{})
 
 	action := firstSubmatch(t, `action="([^"]+)"`, redirectHTML, "redirect action")
 	code := firstSubmatch(t, `name="code"\s+value="([^"]+)"`, redirectHTML, "code")

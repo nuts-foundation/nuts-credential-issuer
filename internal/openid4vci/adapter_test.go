@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth"
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/nutsclient"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/openid4vci"
@@ -36,12 +36,11 @@ type stubAuth struct {
 }
 
 func (a *stubAuth) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, r.URL.Query().Get("session"))
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "login")
 	})
 	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		a.result(w, r, r.FormValue("session"), a.attrs)
+		a.result(w, r, a.attrs)
 	})
 }
 
@@ -113,7 +112,7 @@ func newHarness(t *testing.T, opts openid4vci.Options, verr error) *harness {
 	node := newFakeNode(t)
 	nuts := nutsclient.New(node.server.URL, nil)
 	svc := issuer.NewService(nuts, nuts, func() time.Time { return now },
-		issuer.Config{IssuerSubject: "issuer", ConfigID: credentials.ServiceProviderCredentialType})
+		issuer.Config{IssuerSubject: "issuer"})
 
 	renderer := &stubRenderer{}
 	if opts.BaseURL == "" {
@@ -130,8 +129,15 @@ func newHarness(t *testing.T, opts openid4vci.Options, verr error) *harness {
 	}
 	t.Cleanup(adapter.Close)
 	authn := &stubAuth{attrs: auth.Attributes{LegalName: "Voorbeeld B.V.", Identifier: "90000001"}, result: adapter.OnAuthenticated}
-	srv := httptest.NewServer(adapter.Handler(authn))
+
+	mux := http.NewServeMux()
+	adapter.RegisterRoutes(mux)
+	authn.RegisterRoutes(mux)
+	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
+	// A cookie jar carries the session cookie through the login/consent steps.
+	jar, _ := cookiejar.New(nil)
+	srv.Client().Jar = jar
 	return &harness{srv: srv, node: node, renderer: renderer}
 }
 
@@ -150,11 +156,12 @@ func (h *harness) driveToToken(t *testing.T, redirectURI, services string) (toke
 		"state":                 {"st"},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
-		"client_id":             {"http://nutsnode:8080/oauth2/wallet"},
+		// client_id host must match the holder DID host (consent/proof binding).
+		"client_id": {"http://holder.example.nl/oauth2/wallet"},
 	}.Encode()
-	sessionID := string(mustGet(t, c, authURL))
-	mustPostForm(t, c, h.srv.URL+"/login", url.Values{"session": {sessionID}})
-	code := string(mustPostForm(t, c, h.srv.URL+"/consent", url.Values{"session": {sessionID}, "services": {services}}))
+	mustGet(t, c, authURL) // follows the 302 to /login, setting the session cookie
+	mustPostForm(t, c, h.srv.URL+"/login", url.Values{})
+	code := string(mustPostForm(t, c, h.srv.URL+"/consent", url.Values{"services": {services}}))
 
 	body := mustPostForm(t, c, h.srv.URL+"/token", url.Values{
 		"grant_type":    {"authorization_code"},
@@ -256,19 +263,6 @@ func TestMetadata(t *testing.T) {
 	_ = json.Unmarshal(mustGet(t, h.srv.Client(), h.srv.URL+"/.well-known/oauth-authorization-server"), &as)
 	if as["token_endpoint"] != testAudience+"/token" || as["authorization_endpoint"] != testAudience+"/authorize" {
 		t.Errorf("AS metadata = %v", as)
-	}
-}
-
-func TestCallbackRewrite(t *testing.T) {
-	h := newHarness(t, openid4vci.Options{CallbackRewriteFrom: "internal.host:8080", CallbackRewriteTo: "localhost:8080"}, nil)
-	redirectURI := "http://internal.host:8080/oauth2/wallet/callback"
-	token, _ := h.driveToToken(t, redirectURI, "")
-	if token == "" {
-		t.Fatal("token exchange with the original redirect_uri failed")
-	}
-	action := h.renderer.lastRedirect.Action
-	if !strings.Contains(action, "localhost:8080") || strings.Contains(action, "internal.host") {
-		t.Errorf("redirect action not rewritten for the browser: %q", action)
 	}
 }
 

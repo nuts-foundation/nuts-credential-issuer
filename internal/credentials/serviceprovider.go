@@ -17,8 +17,7 @@ const ServiceProviderCredentialType = "ServiceProviderCredential"
 // serviceProviderContext is the JSON-LD @context of the ServiceProviderCredential.
 // It is intrinsic to the credential type. The second entry is the GIS context
 // defining ServiceProvider, name and services; its host is still a placeholder
-// (see lspxnuts-pilots #6/#7) and the issuing Nuts node must map it to the GIS
-// JSON-LD context document.
+// (see lspxnuts-pilots #6/#7).
 var serviceProviderContext = []string{
 	"https://www.w3.org/2018/credentials/v1",
 	"http://gis-nl.example/",

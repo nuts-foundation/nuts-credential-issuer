@@ -14,7 +14,6 @@ var templatesFS embed.FS
 
 // ConsentView is the consent page model.
 type ConsentView struct {
-	SessionID       string
 	PostPath        string
 	CredentialType  string
 	OrgName         string
