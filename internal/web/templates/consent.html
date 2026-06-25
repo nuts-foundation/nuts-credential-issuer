@@ -1,0 +1,49 @@
+{{template "head" .}}
+<div class="card">
+  <div class="head">
+    <div class="eyebrow">Toestemming vereist</div>
+    <h1>Credential uitgeven</h1>
+  </div>
+  <div class="body">
+    <p class="lede">
+      Controleer het onderstaande verzoek. Na uw akkoord wordt een
+      <strong>{{.CredentialType}}</strong> uitgegeven aan de wallet{{if .Recipient}}
+      op <strong>{{.Recipient}}</strong>{{end}} voor de organisatie waarmee u bent
+      ingelogd.
+    </p>
+    <dl class="summary">
+      <div>
+        <dt>Credential</dt>
+        <dd>{{.CredentialType}}</dd>
+      </div>
+      <div>
+        <dt>Organisatie</dt>
+        <dd>{{.OrgName}}</dd>
+      </div>
+      <div>
+        <dt>KvK-nummer</dt>
+        <dd>{{.OrgIdentifier}}</dd>
+      </div>
+      {{if .Recipient}}
+      <div>
+        <dt>Ontvangende wallet</dt>
+        <dd>
+          <code>{{.Recipient}}</code>
+          {{if .RecipientDetail}}<span class="detail">{{.RecipientDetail}}</span>{{end}}
+        </dd>
+      </div>
+      {{end}}
+    </dl>
+    <form method="post" action="{{.PostPath}}">
+      <div class="field">
+        <label for="services">Services</label>
+        <input id="services" name="services" value="{{.Services}}">
+        <span class="hint">Komma-gescheiden lijst van diensten in de credential.</span>
+      </div>
+      <div class="actions">
+        <button class="primary" type="submit">Akkoord &amp; uitgeven</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{template "foot" .}}

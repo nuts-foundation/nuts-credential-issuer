@@ -1,0 +1,45 @@
+{
+  "@context": {
+    "gis": "http://gis-nl.example/",
+    "schema": "http://schema.org/",
+
+    "HealthcareProvider": "gis:Organization",
+    "HealthcareProfessional": "gis:HealthcareProfessional",
+    "HealthcareWorker": "gis:HealthcareWorker",
+    "Patient": "gis:Patient",
+    "ServiceProvider": "gis:ServiceProvider",
+
+    "HealthcareProviderCredential": "gis:HealthcareProviderCredential",
+    "ServiceProviderCredential": "gis:ServiceProviderCredential",
+    "ServiceProviderDelegationCredential": "gis:ServiceProviderDelegationCredential",
+    "HealthcareProfessionalDelegationCredential": "gis:HealthcareProfessionalDelegationCredential",
+    "PatientEnrollmentCredential": "gis:PatientEnrollmentCredential",
+
+    "Delegation": "gis:Delegation",
+    "DelegationScope": "gis:DelegationScope",
+    "PatientEnrollment": "gis:PatientEnrollment",
+
+    "Identifier": "schema:PropertyValue",
+    "identifier": {
+      "@id": "schema:identifier",
+      "@container": "@set"
+    },
+    "system": "schema:propertyID",
+    "value": "schema:value",
+    "roleCode": {
+      "@id": "gis:roleCode",
+      "@type": "http://fhir.nl/fhir/NamingSystem/uzi-rolcode"
+    },
+    "name": "schema:name",
+
+    "hasDelegation": "gis:hasDelegation",
+    "delegatedBy": "gis:delegatedBy",
+    "scope": "gis:scope",
+    "authorizationRule": "gis:authorizationRule",
+    "authorizedActions": "gis:authorizedActions",
+    "hasEnrollment": "gis:hasEnrollment",
+    "patient": "gis:patient",
+    "enrolledBy": "gis:enrolledBy",
+    "services": "gis:services"
+  }
+}

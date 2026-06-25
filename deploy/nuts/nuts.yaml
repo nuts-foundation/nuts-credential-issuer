@@ -1,0 +1,24 @@
+# Nuts node config for the local credential-issuer demo. The node acts as both
+# the issuer's signing node and the vendor's wallet (holder).
+#
+# url uses the Docker service name so the issuer can resolve holder/issuer
+# did:web documents over the Docker network (server-to-server). The browser-side
+# OAuth callback is rewritten to localhost by the request script.
+url: http://nutsnode:8080
+strictmode: false
+didmethods:
+  - web
+http:
+  internal:
+    address: :8081
+  log: metadata-and-body
+auth:
+  contractvalidators:
+    - dummy
+  authorizationendpoint:
+    enabled: true
+jsonld:
+  contexts:
+    localmapping:
+      # The ServiceProviderCredential @context, mapped to the GIS context doc.
+      "http://gis-nl.example/": /nuts/contexts/gis.jsonld

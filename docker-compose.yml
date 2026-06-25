@@ -1,0 +1,55 @@
+# Local demo stack for the nuts-credential-issuer.
+#
+# Topology:
+#   - Server-to-server calls use Docker service names (nutsnode, issuer).
+#   - The `make request` script rewrites those hosts to localhost for its own
+#     host-side calls. `make demo` opens a real browser and needs a
+#     `127.0.0.1 nutsnode` entry in /etc/hosts for the wallet callback.
+#
+# Usage:
+#   make up        # start node + admin, provision DIDs, start issuer
+#   make request   # run the OpenID4VCI flow and fetch the credential
+#   make down      # tear everything down
+
+services:
+  nutsnode:
+    image: nutsfoundation/nuts-node:project-gf-pilot
+    # project-gf-pilot is a moving tag; always pull the latest build.
+    pull_policy: always
+    environment:
+      NUTS_CONFIGFILE: /nuts/nuts.yaml
+      NUTS_VERBOSITY: debug
+    volumes:
+      - ./deploy/nuts/nuts.yaml:/nuts/nuts.yaml:ro
+      - ./deploy/nuts/contexts:/nuts/contexts:ro
+    ports:
+      - "8080:8080"   # public API (browser-reachable as localhost:8080)
+      - "18081:8081"  # internal API (host tooling / request script)
+
+  nutsadmin:
+    image: nutsfoundation/nuts-admin:6
+    environment:
+      NUTS_NODE_ADDRESS: http://nutsnode:8081
+    ports:
+      - "1305:1305"
+    depends_on:
+      - nutsnode
+
+  issuer:
+    build: .
+    environment:
+      CIS_LISTEN_ADDR: ":8088"
+      CIS_TITLE: "Zorg-softwareleverancier Credentialuitgever"
+      # Credential Issuer Identifier and base for token/credential/nonce/authorize.
+      # The demo scripts rewrite this host to localhost for browser-side calls.
+      CIS_BASE_URL: "http://issuer:8088"
+      # Nuts subject the issuer issues from; its DID is resolved from the node at
+      # runtime. Create this subject in Nuts Admin (http://localhost:1305).
+      CIS_ISSUER_SUBJECT: "issuer"
+      CIS_NUTS_NODE_URL: "http://nutsnode:8081"
+      # Demo mode enables the fake eHerkenning login and plain-HTTP did:web resolution.
+      CIS_DEMO: "true"
+    ports:
+      - "8088:8088"
+    depends_on:
+      - nutsnode
