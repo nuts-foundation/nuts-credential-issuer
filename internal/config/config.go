@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -81,6 +82,14 @@ func Load() (Config, error) {
 
 	if cfg.IssuerSubject == "" {
 		return Config{}, fmt.Errorf("CIS_ISSUER_SUBJECT is required")
+	}
+	for _, u := range []struct{ key, val string }{
+		{"CIS_BASE_URL", cfg.BaseURL},
+		{"CIS_NUTS_NODE_URL", cfg.NutsNodeURL},
+	} {
+		if parsed, err := url.Parse(u.val); err != nil || !parsed.IsAbs() || parsed.Host == "" {
+			return Config{}, fmt.Errorf("%s must be an absolute URL, got %q", u.key, u.val)
+		}
 	}
 	return cfg, nil
 }

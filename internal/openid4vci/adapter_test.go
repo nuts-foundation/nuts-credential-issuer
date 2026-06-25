@@ -233,6 +233,25 @@ func TestCredential_RejectsMissingProof(t *testing.T) {
 	mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", token, `{}`, http.StatusBadRequest)
 }
 
+func TestCredential_SecondIssueIsClientError(t *testing.T) {
+	h := newHarness(t, openid4vci.Options{}, nil)
+	token, cNonce := h.driveToToken(t, "http://wallet/cb", "")
+	mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", token, `{"proofs":{"jwt":["`+cNonce+`"]}}`, http.StatusOK)
+
+	// A second issuance for the same (already-Issued) session is a client
+	// sequencing error (400), not a 500.
+	resp, err := h.srv.Client().Post(h.srv.URL+"/nonce", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n struct {
+		CNonce string `json:"c_nonce"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&n)
+	resp.Body.Close()
+	mustCredential(t, h.srv.Client(), h.srv.URL+"/credential", token, `{"proofs":{"jwt":["`+n.CNonce+`"]}}`, http.StatusBadRequest)
+}
+
 func TestCredential_RejectsBadNonce(t *testing.T) {
 	h := newHarness(t, openid4vci.Options{}, nil)
 	token, _ := h.driveToToken(t, "http://wallet/cb", "")

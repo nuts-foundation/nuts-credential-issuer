@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/id"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuance"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuer"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/proof"
@@ -32,12 +33,21 @@ type ProofVerifier interface {
 	Verify(ctx context.Context, token string) (proof.Result, error)
 }
 
+// Service is the application use-case service the adapter drives.
+type Service interface {
+	CredentialType() string
+	Start(issuer.StartParams) (*issuance.Issuance, error)
+	Authenticate(*issuance.Issuance, issuance.Organization) (issuer.ConsentDetails, error)
+	Consent(*issuance.Issuance, []string) error
+	Issue(ctx context.Context, iss *issuance.Issuance, holderDID string) (json.RawMessage, error)
+}
+
 // Options configures the adapter.
 type Options struct {
 	// BaseURL is the Credential Issuer Identifier and the base for the authorize,
 	// token, credential and nonce endpoints.
 	BaseURL  string
-	Service  *issuer.Service
+	Service  Service
 	Renderer Renderer
 	Proofs   ProofVerifier
 	// LoginPath is the authenticator's login route; the adapter redirects the user
@@ -198,7 +208,7 @@ func (a *Adapter) handleConsent(w http.ResponseWriter, r *http.Request) {
 		a.renderServiceError(w, err)
 		return
 	}
-	code := newID()
+	code := id.New()
 	sess.code = code
 	a.store.bindCode(code, sess.id())
 
@@ -229,9 +239,10 @@ func (a *Adapter) handleToken(w http.ResponseWriter, r *http.Request) {
 		oauthErr(w, http.StatusBadRequest, "invalid_grant", "PKCE verification failed")
 		return
 	}
-	token := newID()
+	token := id.New()
 	sess.token = token
 	a.store.bindToken(token, sess.id())
+	w.Header().Set("Cache-Control", "no-store") // OAuth 2.0 §5.1
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token": token,
 		"token_type":   "Bearer",
@@ -251,7 +262,7 @@ func (a *Adapter) handleCredential(w http.ResponseWriter, r *http.Request) {
 		oauthErr(w, http.StatusUnauthorized, "invalid_token", "missing bearer access token")
 		return
 	}
-	sess, ok := a.store.byTokenLookup(token)
+	sess, ok := a.store.getByToken(token)
 	if !ok {
 		oauthErr(w, http.StatusUnauthorized, "invalid_token", "unknown or expired access token")
 		return
@@ -289,6 +300,12 @@ func (a *Adapter) handleCredential(w http.ResponseWriter, r *http.Request) {
 
 	vc, err := a.opts.Service.Issue(r.Context(), sess.issuance, res.HolderDID)
 	if err != nil {
+		// A credential was already issued for this session (or another invalid
+		// step) is a client sequencing error, not a server fault.
+		if errors.Is(err, issuance.ErrInvalidState) {
+			oauthErr(w, http.StatusBadRequest, "invalid_request", "credential already issued for this session")
+			return
+		}
 		slog.Error("credential issuance failed", "err", err)
 		// TODO(#2): keep this description generic; expose details only in non-strict mode.
 		oauthErr(w, http.StatusInternalServerError, "server_error", "internal error")

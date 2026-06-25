@@ -1,11 +1,10 @@
 package openid4vci
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"sync"
 	"time"
 
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/id"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuance"
 )
 
@@ -103,8 +102,8 @@ func (s *sessionStore) bindToken(token, id string) {
 	s.byToken[token] = id
 }
 
-// byTokenLookup returns the live (non-expired) session for an access token.
-func (s *sessionStore) byTokenLookup(token string) (*session, bool) {
+// getByToken returns the live (non-expired) session for an access token.
+func (s *sessionStore) getByToken(token string) (*session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, ok := s.byToken[token]
@@ -120,7 +119,7 @@ func (s *sessionStore) byTokenLookup(token string) (*session, bool) {
 
 // issueNonce mints a c_nonce valid for the store's TTL.
 func (s *sessionStore) issueNonce() string {
-	nonce := newID()
+	nonce := id.New()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nonces[nonce] = s.now()
@@ -185,12 +184,4 @@ func (s *sessionStore) sweep() {
 			delete(s.nonces, nonce)
 		}
 	}
-}
-
-func newID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(b)
 }

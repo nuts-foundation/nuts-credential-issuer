@@ -2,13 +2,13 @@ package issuer
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
+	"github.com/nuts-foundation/nuts-credential-issuer/internal/id"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/issuance"
 )
 
@@ -31,7 +31,7 @@ type Service struct {
 	now      func() time.Time
 	cfg      Config
 
-	issuerDID string // cached resolution of cfg.IssuerSubject
+	issuerDID atomic.Value // string; cached resolution of cfg.IssuerSubject
 }
 
 // NewService constructs the application service.
@@ -52,7 +52,7 @@ func (s *Service) Start(p StartParams) (*issuance.Issuance, error) {
 		return nil, err
 	}
 	return issuance.New(issuance.Params{
-		ID:        randID(),
+		ID:        id.New(),
 		ConfigID:  configID,
 		Recipient: p.Recipient,
 	}, s.now()), nil
@@ -114,24 +114,16 @@ func (s *Service) Issue(ctx context.Context, iss *issuance.Issuance, holderDID s
 
 // resolveIssuerDID resolves and caches the issuer DID from its Nuts subject. It
 // is resolved lazily so the subject may be created (via Nuts Admin) after start.
-// Resolving concurrently more than once is harmless (the result is the same), so
-// no locking is used.
+// The cache is an atomic value: resolving concurrently more than once is harmless
+// (the result is the same), and on error it stays unset so a later call retries.
 func (s *Service) resolveIssuerDID(ctx context.Context) (string, error) {
-	if s.issuerDID != "" {
-		return s.issuerDID, nil
+	if did, ok := s.issuerDID.Load().(string); ok {
+		return did, nil
 	}
 	did, err := s.subjects.ResolveDID(ctx, s.cfg.IssuerSubject)
 	if err != nil {
 		return "", err
 	}
-	s.issuerDID = did
+	s.issuerDID.Store(did)
 	return did, nil
-}
-
-func randID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(b)
 }
