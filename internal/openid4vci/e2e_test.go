@@ -25,8 +25,10 @@ package openid4vci_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -58,7 +60,19 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 	if nodeInternal == "" || subject == "" || walletDID == "" || listenAddr == "" || issuerBaseURL == "" {
 		t.Skip("E2E_* environment not set; skipping end-to-end test")
 	}
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIssuanceFlow(t, ln, nodeInternal, subject, walletDID, issuerBaseURL, issuerSubject)
+}
 
+// runIssuanceFlow stands up the in-process issuer on ln and drives the full
+// OpenID4VCI flow against an already-running Nuts node, then asserts the
+// credential lands in the wallet. issuerBaseURL is how the node reaches the
+// in-process issuer; walletSubject is the holder subject on the node.
+func runIssuanceFlow(t *testing.T, ln net.Listener, nodeInternal, walletSubject, walletDID, issuerBaseURL, issuerSubject string) {
+	t.Helper()
 	renderer, err := web.New("Nuts Credential Issuer")
 	if err != nil {
 		t.Fatal(err)
@@ -89,21 +103,20 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 	mux := http.NewServeMux()
 	adapter.RegisterRoutes(mux)
 	authenticator.RegisterRoutes(mux)
-	srv := &http.Server{Addr: listenAddr, Handler: mux}
-	go func() { _ = srv.ListenAndServe() }()
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
-	time.Sleep(200 * time.Millisecond) // let the listener come up
 
 	// 1. Ask the node (wallet) to start the OpenID4VCI flow against our issuer.
 	reqBody, _ := json.Marshal(map[string]any{
 		"wallet_did": walletDID,
-		"issuer":     strings.TrimRight(issuerBaseURL, "/"),
+		"issuer":     base,
 		"authorization_details": []map[string]any{
 			{"type": "openid_credential", "credential_configuration_id": "ServiceProviderCredential"},
 		},
 		"redirect_uri": "http://localhost/done",
 	})
-	startResp := postJSON(t, nodeInternal+"/internal/auth/v2/"+subject+"/request-credential", reqBody)
+	startResp := postJSON(t, nodeInternal+"/internal/auth/v2/"+walletSubject+"/request-credential", reqBody)
 	var start struct {
 		RedirectURI string `json:"redirect_uri"`
 		SessionID   string `json:"session_id"`
@@ -127,9 +140,15 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
-	httpGet(t, browser, start.RedirectURI) // follows the 302 to /login, setting the session cookie
-	httpPostForm(t, browser, issuerBaseURL+eherkenning.LoginPath, url.Values{})
-	redirectHTML := httpPostForm(t, browser, issuerBaseURL+"/consent", url.Values{})
+	// The issuer is advertised at issuerBaseURL (how the node reaches it). The test
+	// process reaches the same listener via localhost, so rewrite the host for the
+	// browser-side requests (a no-op when the two are already equal).
+	localBase := strings.ReplaceAll(base, "host.docker.internal", "localhost")
+	loginURL := strings.ReplaceAll(start.RedirectURI, "host.docker.internal", "localhost")
+
+	httpGet(t, browser, loginURL) // follows the 302 to /login, setting the session cookie
+	httpPostForm(t, browser, localBase+eherkenning.LoginPath, url.Values{})
+	redirectHTML := httpPostForm(t, browser, localBase+"/consent", url.Values{})
 
 	action := firstSubmatch(t, `action="([^"]+)"`, redirectHTML, "redirect action")
 	code := firstSubmatch(t, `name="code"\s+value="([^"]+)"`, redirectHTML, "code")
@@ -143,7 +162,7 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 	resp.Body.Close()
 
 	// 3. The node should now hold a ServiceProviderCredential for the wallet DID.
-	if !walletHoldsCredential(t, nodeInternal, subject, walletDID) {
+	if !walletHoldsCredential(t, nodeInternal, walletSubject, walletDID) {
 		t.Fatal("ServiceProviderCredential was not found in the wallet")
 	}
 }
@@ -157,8 +176,17 @@ func walletHoldsCredential(t *testing.T, nodeInternal, subject, walletDID string
 		if err == nil && resp.StatusCode == http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			if strings.Contains(string(body), "ServiceProviderCredential") && strings.Contains(string(body), walletDID) {
-				return true
+			// The wallet returns its credentials as JWTs; the type and subject are
+			// inside the base64 payload, so decode each before matching.
+			var jwts []string
+			if json.Unmarshal(body, &jwts) == nil {
+				for _, j := range jwts {
+					if vc := decodeVC(j); vc != nil &&
+						typeContains(vc, "ServiceProviderCredential") &&
+						subjectID(vc) == walletDID {
+						return true
+					}
+				}
 			}
 		} else if resp != nil {
 			resp.Body.Close()
@@ -166,6 +194,46 @@ func walletHoldsCredential(t *testing.T, nodeInternal, subject, walletDID string
 		time.Sleep(time.Second)
 	}
 	return false
+}
+
+// decodeVC extracts the "vc" claim from a jwt_vc credential's base64 payload.
+func decodeVC(jwtVC string) map[string]any {
+	parts := strings.Split(jwtVC, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var claims struct {
+		VC map[string]any `json:"vc"`
+	}
+	if json.Unmarshal(payload, &claims) != nil {
+		return nil
+	}
+	return claims.VC
+}
+
+func typeContains(vc map[string]any, want string) bool {
+	types, _ := vc["type"].([]any)
+	for _, t := range types {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+func subjectID(vc map[string]any) string {
+	subj, ok := vc["credentialSubject"].(map[string]any)
+	if !ok {
+		if list, ok := vc["credentialSubject"].([]any); ok && len(list) > 0 {
+			subj, _ = list[0].(map[string]any)
+		}
+	}
+	id, _ := subj["id"].(string)
+	return id
 }
 
 func postJSON(t *testing.T, url string, body []byte) []byte {
