@@ -61,8 +61,9 @@ func TestIntegration_IssueServiceProviderCredential(t *testing.T) {
 	createSubject(t, "wallet")
 	walletDID := resolveDID(t, "wallet")
 
-	// The node reaches the in-process issuer via host.docker.internal.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// The node reaches the in-process issuer via host.docker.internal, which on
+	// Linux is the docker bridge gateway, so bind all interfaces (not just loopback).
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
 	}
