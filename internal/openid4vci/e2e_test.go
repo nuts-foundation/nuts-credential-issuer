@@ -63,32 +63,31 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authenticator, err := eherkenning.New("Voorbeeld Dienstverlener B.V.", "90000001", "Nuts Credential Issuer")
-	if err != nil {
-		t.Fatal(err)
-	}
 	base := strings.TrimRight(issuerBaseURL, "/")
 	nuts := nutsclient.New(strings.TrimRight(nodeInternal, "/"), nil)
 	verifier := proof.NewVerifier(didweb.New(true, nil), base, time.Now)
 	svc := issuer.NewService(nuts, nuts, time.Now, issuer.Config{
-		IssuerSubject:      issuerSubject,
-		ConfigID:           credentials.ServiceProviderCredentialType,
-		CredentialValidity: 24 * time.Hour,
+		IssuerSubject: issuerSubject,
+		ConfigID:      credentials.ServiceProviderCredentialType,
 	})
 	adapter, err := openid4vci.New(openid4vci.Options{
-		BaseURL:       base,
-		Service:       svc,
-		Renderer:      renderer,
-		Authenticator: authenticator,
-		Proofs:        verifier,
-		SessionTTL:    10 * time.Minute,
-		Now:           time.Now,
+		BaseURL:    base,
+		Service:    svc,
+		Renderer:   renderer,
+		Proofs:     verifier,
+		LoginPath:  eherkenning.LoginPath,
+		SessionTTL: 10 * time.Minute,
+		Now:        time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	authenticator, err := eherkenning.New("Voorbeeld Dienstverlener B.V.", "90000001", "Nuts Credential Issuer", adapter.OnAuthenticated)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	srv := &http.Server{Addr: listenAddr, Handler: adapter.Handler()}
+	srv := &http.Server{Addr: listenAddr, Handler: adapter.Handler(authenticator)}
 	go func() { _ = srv.ListenAndServe() }()
 	defer srv.Close()
 	time.Sleep(200 * time.Millisecond) // let the listener come up
@@ -114,27 +113,27 @@ func TestE2E_IssueServiceProviderCredential(t *testing.T) {
 		t.Fatalf("node did not return a redirect_uri: %s", startResp)
 	}
 
-	// 2. Act as the browser: log in, consent, and follow the redirect back to
-	// the node's callback so it can finish the token + credential exchange.
-	client := &http.Client{
-		// Do not follow the final redirect into the node automatically; we call
-		// the callback explicitly below.
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	// 2. Act as the browser. The /authorize endpoint redirects to the login page,
+	// so this client follows redirects.
+	browser := &http.Client{Timeout: 30 * time.Second}
+	// For the final node callback we must NOT follow the redirect into the node's
+	// own redirect_uri; we just want the node to complete the exchange.
+	noFollow := &http.Client{
 		Timeout:       30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
-	loginHTML := httpGet(t, client, start.RedirectURI)
+	loginHTML := httpGet(t, browser, start.RedirectURI)
 	sessionID := firstSubmatch(t, `name="session"\s+value="([^"]+)"`, loginHTML, "session id on login page")
-	consentHTML := httpPostForm(t, client, issuerBaseURL+eherkenning.LoginPath, url.Values{"session": {sessionID}})
-	_ = consentHTML
-	redirectHTML := httpPostForm(t, client, issuerBaseURL+"/consent", url.Values{"session": {sessionID}})
+	httpPostForm(t, browser, issuerBaseURL+eherkenning.LoginPath, url.Values{"session": {sessionID}})
+	redirectHTML := httpPostForm(t, browser, issuerBaseURL+"/consent", url.Values{"session": {sessionID}})
 
 	action := firstSubmatch(t, `action="([^"]+)"`, redirectHTML, "redirect action")
 	code := firstSubmatch(t, `name="code"\s+value="([^"]+)"`, redirectHTML, "code")
 	state := firstSubmatch(t, `name="state"\s+value="([^"]+)"`, redirectHTML, "state")
 
 	callbackURL := action + "?" + url.Values{"code": {code}, "state": {state}}.Encode()
-	resp, err := client.Get(callbackURL)
+	resp, err := noFollow.Get(callbackURL)
 	if err != nil {
 		t.Fatalf("node callback: %v", err)
 	}

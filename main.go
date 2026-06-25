@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/auth/eherkenning"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/config"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
@@ -45,41 +43,38 @@ func main() {
 		os.Exit(1)
 	}
 
+	if !cfg.Demo {
+		slog.Error("no authentication method configured: set CIS_DEMO=true to use the fake eHerkenning authenticator")
+		os.Exit(1)
+	}
+
 	renderer, err := web.New(cfg.Title)
 	if err != nil {
 		slog.Error("failed to load templates", "err", err)
 		os.Exit(1)
 	}
 
-	authenticator, err := buildAuthenticator(cfg)
-	if err != nil {
-		slog.Error("failed to build authenticator", "err", err)
-		os.Exit(1)
-	}
-
 	// Outbound adapters.
 	nuts := nutsclient.New(cfg.NutsNodeURL, &http.Client{Timeout: 30 * time.Second})
-	verifier := proof.NewVerifier(didweb.New(cfg.InsecureDIDWeb, &http.Client{Timeout: 10 * time.Second}), cfg.BaseURL, time.Now)
+	verifier := proof.NewVerifier(didweb.New(cfg.Demo, &http.Client{Timeout: 10 * time.Second}), cfg.BaseURL, time.Now)
 
 	// Application service (protocol-agnostic).
 	service := issuer.NewService(nuts, nuts, time.Now, issuer.Config{
-		IssuerSubject:      cfg.IssuerSubject,
-		ConfigID:           credentials.ServiceProviderCredentialType,
-		CredentialValidity: cfg.CredentialValidity,
+		IssuerSubject: cfg.IssuerSubject,
+		ConfigID:      credentials.ServiceProviderCredentialType,
 	})
 
 	// Inbound HTTP adapter (owns the OAuth/OpenID4VCI protocol and session state).
 	adapter, err := openid4vci.New(openid4vci.Options{
-		BaseURL:               cfg.BaseURL,
-		AuthorizationEndpoint: cfg.AuthorizationEndpoint,
-		Service:               service,
-		Renderer:              renderer,
-		Authenticator:         authenticator,
-		Proofs:                verifier,
-		CallbackRewriteFrom:   cfg.CallbackRewriteFrom,
-		CallbackRewriteTo:     cfg.CallbackRewriteTo,
-		SessionTTL:            sessionTTL,
-		Now:                   time.Now,
+		BaseURL:             cfg.BaseURL,
+		Service:             service,
+		Renderer:            renderer,
+		Proofs:              verifier,
+		LoginPath:           eherkenning.LoginPath,
+		CallbackRewriteFrom: cfg.CallbackRewriteFrom,
+		CallbackRewriteTo:   cfg.CallbackRewriteTo,
+		SessionTTL:          sessionTTL,
+		Now:                 time.Now,
 	})
 	if err != nil {
 		slog.Error("failed to start issuer", "err", err)
@@ -87,9 +82,17 @@ func main() {
 	}
 	defer adapter.Close()
 
+	// Demo authenticator, wired to call back into the adapter on success.
+	slog.Warn("DEMO mode enabled — using the FAKE eHerkenning authenticator; it performs NO identity verification and must never be used in a hosted deployment")
+	authenticator, err := eherkenning.New(cfg.DemoOrgName, cfg.DemoOrgIdentifier, cfg.Title, adapter.OnAuthenticated)
+	if err != nil {
+		slog.Error("failed to build authenticator", "err", err)
+		os.Exit(1)
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           adapter.Handler(),
+		Handler:           adapter.Handler(authenticator),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -123,17 +126,6 @@ func serve(srv *http.Server) error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
-}
-
-// buildAuthenticator wires the configured authentication method. Only the demo
-// fake eHerkenning exists today, so the issuer refuses to start unless DEMO is
-// set — the fake login can never be the default in a hosted deployment.
-func buildAuthenticator(cfg config.Config) (auth.Authenticator, error) {
-	if !cfg.Demo {
-		return nil, fmt.Errorf("no authentication method configured: set DEMO=true to use the fake eHerkenning authenticator")
-	}
-	slog.Warn("DEMO mode enabled — using the FAKE eHerkenning authenticator; it performs NO identity verification and must never be used in a hosted deployment")
-	return eherkenning.New(cfg.DemoOrgName, cfg.DemoOrgIdentifier, cfg.Title)
 }
 
 // healthcheck probes the local /health endpoint and returns a process exit code.

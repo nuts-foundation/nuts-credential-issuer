@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,9 +20,6 @@ import (
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/proof"
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/web"
 )
-
-// consentPath is where the consent form is submitted (route + form action).
-const consentPath = "/consent"
 
 // Renderer renders the issuer's HTML pages.
 type Renderer interface {
@@ -37,16 +35,15 @@ type ProofVerifier interface {
 
 // Options configures the adapter.
 type Options struct {
-	// BaseURL is the Credential Issuer Identifier and the base for the token,
-	// credential and nonce endpoints (server-to-server URLs).
-	BaseURL string
-	// AuthorizationEndpoint is the URL advertised as authorization_endpoint (the
-	// one browser-facing URL).
-	AuthorizationEndpoint string
-	Service               *issuer.Service
-	Renderer              Renderer
-	Authenticator         auth.Authenticator
-	Proofs                ProofVerifier
+	// BaseURL is the Credential Issuer Identifier and the base for the authorize,
+	// token, credential and nonce endpoints.
+	BaseURL  string
+	Service  *issuer.Service
+	Renderer Renderer
+	Proofs   ProofVerifier
+	// LoginPath is the authenticator's login route; the adapter redirects the user
+	// there to begin authentication.
+	LoginPath string
 	// CallbackRewriteFrom/To rewrite the host of the wallet's callback URL only
 	// when rendering the browser redirect, so a browser can reach a node whose
 	// NUTS_URL is an internal hostname.
@@ -69,11 +66,11 @@ func New(opts Options) (*Adapter, error) {
 	if opts.BaseURL == "" {
 		return nil, errors.New("BaseURL is required")
 	}
-	if opts.Service == nil || opts.Renderer == nil || opts.Authenticator == nil || opts.Proofs == nil {
-		return nil, errors.New("Service, Renderer, Authenticator and Proofs are required")
+	if opts.Service == nil || opts.Renderer == nil || opts.Proofs == nil {
+		return nil, errors.New("Service, Renderer and Proofs are required")
 	}
-	if opts.AuthorizationEndpoint == "" {
-		opts.AuthorizationEndpoint = opts.BaseURL + "/authorize"
+	if opts.LoginPath == "" {
+		return nil, errors.New("LoginPath is required")
 	}
 	if opts.SessionTTL == 0 {
 		opts.SessionTTL = 10 * time.Minute
@@ -88,8 +85,9 @@ func New(opts Options) (*Adapter, error) {
 // Close stops the background session reaper.
 func (a *Adapter) Close() { a.store.close() }
 
-// Handler returns the HTTP handler exposing all issuer endpoints.
-func (a *Adapter) Handler() http.Handler {
+// Handler returns the HTTP handler exposing all issuer endpoints. The
+// authenticator mounts its own routes (login page + submission) on the same mux.
+func (a *Adapter) Handler(authn auth.Authenticator) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -97,11 +95,11 @@ func (a *Adapter) Handler() http.Handler {
 	mux.HandleFunc("GET /.well-known/openid-credential-issuer", a.handleIssuerMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", a.handleASMetadata)
 	mux.HandleFunc("GET /authorize", a.handleAuthorize)
-	mux.HandleFunc("POST "+consentPath, a.handleConsent)
+	mux.HandleFunc("POST /consent", a.handleConsent)
 	mux.HandleFunc("POST /token", a.handleToken)
 	mux.HandleFunc("POST /nonce", a.handleNonce)
 	mux.HandleFunc("POST /credential", a.handleCredential)
-	a.opts.Authenticator.RegisterRoutes(mux, a.onAuthenticated)
+	authn.RegisterRoutes(mux)
 	return mux
 }
 
@@ -110,7 +108,7 @@ func (a *Adapter) handleIssuerMetadata(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *Adapter) handleASMetadata(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, authServerMetadata(a.opts.BaseURL, a.opts.AuthorizationEndpoint))
+	writeJSON(w, http.StatusOK, authServerMetadata(a.opts.BaseURL))
 }
 
 func (a *Adapter) handleAuthorize(w http.ResponseWriter, r *http.Request) {
@@ -149,14 +147,14 @@ func (a *Adapter) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		codeChallenge: q.Get("code_challenge"),
 	})
 
-	if err := a.opts.Authenticator.Start(w, r, iss.ID()); err != nil {
-		a.opts.Renderer.Error(w, http.StatusInternalServerError, "kan authenticatie niet starten")
-	}
+	// Hand off to the authenticator's login route, carrying the session id.
+	http.Redirect(w, r, a.opts.LoginPath+"?session="+url.QueryEscape(iss.ID()), http.StatusFound)
 }
 
-// onAuthenticated advances the issuance once the user is authenticated and
-// renders consent.
-func (a *Adapter) onAuthenticated(w http.ResponseWriter, _ *http.Request, sessionID string, attrs auth.Attributes) {
+// OnAuthenticated is the auth.Result callback: once the authenticator has
+// authenticated the user it advances the issuance and renders consent. Wire it
+// into the authenticator at construction.
+func (a *Adapter) OnAuthenticated(w http.ResponseWriter, _ *http.Request, sessionID string, attrs auth.Attributes) {
 	sess, ok := a.store.get(sessionID)
 	if !ok {
 		a.opts.Renderer.Error(w, http.StatusBadRequest, "onbekende of verlopen sessie")
@@ -172,7 +170,7 @@ func (a *Adapter) onAuthenticated(w http.ResponseWriter, _ *http.Request, sessio
 	}
 	if err := a.opts.Renderer.Consent(w, web.ConsentView{
 		SessionID:       sessionID,
-		PostPath:        consentPath,
+		PostPath:        "/consent",
 		CredentialType:  details.CredentialType,
 		OrgName:         details.Organization.LegalName,
 		OrgIdentifier:   details.Organization.Identifier,

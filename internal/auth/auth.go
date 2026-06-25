@@ -1,11 +1,11 @@
 // Package auth defines the swappable authentication seam of the issuer.
 //
-// Authentication is interactive: the user logs in between the start and the
-// result of the flow. An Authenticator owns its own UI and HTTP handlers; it
-// registers them on a mux the issuer injects, and calls a Result continuation
-// once authentication completes. The demo ships a fake eHerkenning
-// implementation (package eherkenning); real authentication can be dropped in
-// behind the same interface without touching the OpenID4VCI core.
+// An Authenticator is a self-contained HTTP module: it registers its own routes
+// (the login page and the submission) on a mux, and calls back the Result it was
+// given at construction once the user is authenticated. The issuer's OAuth
+// adapter redirects the user to the authenticator's login route to begin. The
+// demo ships a fake eHerkenning implementation (package eherkenning); real
+// authentication can be dropped in behind the same interface.
 package auth
 
 import "net/http"
@@ -19,19 +19,13 @@ type Attributes struct {
 	Identifier string
 }
 
-// Result is invoked by an Authenticator once the user is authenticated. The
-// issuer supplies it to continue the flow (bind the attributes to the session
-// and show the credential selection). session is the OpenID4VCI session id that
-// Start was given.
+// Result is invoked once the user is authenticated. The issuer supplies it at
+// the authenticator's construction to continue the flow (bind the attributes to
+// the session and show consent). session is the OpenID4VCI session id.
 type Result func(w http.ResponseWriter, r *http.Request, session string, attrs Attributes)
 
-// Authenticator authenticates the user interactively.
+// Authenticator authenticates the user interactively. It mounts its own HTTP
+// handlers (login page + submission) on mux.
 type Authenticator interface {
-	// RegisterRoutes mounts the authenticator's own HTTP handlers on mux (e.g.
-	// the login form submission). result is invoked with the authenticated
-	// attributes when login completes.
-	RegisterRoutes(mux *http.ServeMux, result Result)
-	// Start begins the login for the given OpenID4VCI session, e.g. by rendering
-	// a login page or redirecting to an external IdP.
-	Start(w http.ResponseWriter, r *http.Request, session string) error
+	RegisterRoutes(mux *http.ServeMux)
 }

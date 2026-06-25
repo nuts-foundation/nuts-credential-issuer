@@ -6,6 +6,7 @@ set -euo pipefail
 
 NODE_INTERNAL=${NODE_INTERNAL:-http://localhost:18081}
 ISSUER_SERVER=${ISSUER_SERVER:-http://issuer:8088}   # issuer as the node sees it
+ISSUER_LOCAL=${ISSUER_LOCAL:-http://localhost:8088}  # issuer as the browser sees it
 WALLET_SUBJECT=${WALLET_SUBJECT:-wallet}
 FINAL_REDIRECT=${FINAL_REDIRECT:-http://localhost:1305}   # where the browser lands when done
 
@@ -39,6 +40,9 @@ start=$(curl -sf -X POST "$NODE_INTERNAL/internal/auth/v2/$WALLET_SUBJECT/reques
     \"redirect_uri\": \"$FINAL_REDIRECT\"
   }")
 authorize_url=$(printf '%s' "$start" | python3 -c "import sys,json;print(json.load(sys.stdin)['redirect_uri'])")
+# The authorize endpoint is advertised at the issuer's server host; rewrite it to
+# the browser-reachable host.
+authorize_url=${authorize_url//$ISSUER_SERVER/$ISSUER_LOCAL}
 
 echo
 echo "Open this URL in your browser, log in and consent:"

@@ -30,16 +30,18 @@ const (
 
 // --- stubs ------------------------------------------------------------------
 
-type stubAuth struct{ attrs auth.Attributes }
-
-func (a stubAuth) Start(w http.ResponseWriter, _ *http.Request, session string) error {
-	_, _ = io.WriteString(w, session)
-	return nil
+type stubAuth struct {
+	attrs  auth.Attributes
+	result auth.Result
 }
-func (a stubAuth) RegisterRoutes(mux *http.ServeMux, result auth.Result) {
+
+func (a *stubAuth) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.URL.Query().Get("session"))
+	})
 	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		result(w, r, r.FormValue("session"), a.attrs)
+		a.result(w, r, r.FormValue("session"), a.attrs)
 	})
 }
 
@@ -111,7 +113,7 @@ func newHarness(t *testing.T, opts openid4vci.Options, verr error) *harness {
 	node := newFakeNode(t)
 	nuts := nutsclient.New(node.server.URL, nil)
 	svc := issuer.NewService(nuts, nuts, func() time.Time { return now },
-		issuer.Config{IssuerSubject: "issuer", ConfigID: credentials.ServiceProviderCredentialType, CredentialValidity: 24 * time.Hour})
+		issuer.Config{IssuerSubject: "issuer", ConfigID: credentials.ServiceProviderCredentialType})
 
 	renderer := &stubRenderer{}
 	if opts.BaseURL == "" {
@@ -120,16 +122,15 @@ func newHarness(t *testing.T, opts openid4vci.Options, verr error) *harness {
 	opts.Service = svc
 	opts.Renderer = renderer
 	opts.Proofs = stubVerifier{holderDID: testHolderDID, err: verr}
+	opts.LoginPath = "/login"
 	opts.Now = func() time.Time { return now }
-	if opts.Authenticator == nil {
-		opts.Authenticator = stubAuth{attrs: auth.Attributes{LegalName: "Voorbeeld B.V.", Identifier: "90000001"}}
-	}
 	adapter, err := openid4vci.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(adapter.Close)
-	srv := httptest.NewServer(adapter.Handler())
+	authn := &stubAuth{attrs: auth.Attributes{LegalName: "Voorbeeld B.V.", Identifier: "90000001"}, result: adapter.OnAuthenticated}
+	srv := httptest.NewServer(adapter.Handler(authn))
 	t.Cleanup(srv.Close)
 	return &harness{srv: srv, node: node, renderer: renderer}
 }
@@ -241,7 +242,7 @@ func TestCredential_RejectsInvalidProof(t *testing.T) {
 }
 
 func TestMetadata(t *testing.T) {
-	h := newHarness(t, openid4vci.Options{AuthorizationEndpoint: "http://localhost:9/authorize"}, nil)
+	h := newHarness(t, openid4vci.Options{}, nil)
 	var im map[string]any
 	_ = json.Unmarshal(mustGet(t, h.srv.Client(), h.srv.URL+"/.well-known/openid-credential-issuer"), &im)
 	if im["credential_issuer"] != testAudience || im["credential_endpoint"] != testAudience+"/credential" {
@@ -253,7 +254,7 @@ func TestMetadata(t *testing.T) {
 	}
 	var as map[string]any
 	_ = json.Unmarshal(mustGet(t, h.srv.Client(), h.srv.URL+"/.well-known/oauth-authorization-server"), &as)
-	if as["token_endpoint"] != testAudience+"/token" || as["authorization_endpoint"] != "http://localhost:9/authorize" {
+	if as["token_endpoint"] != testAudience+"/token" || as["authorization_endpoint"] != testAudience+"/authorize" {
 		t.Errorf("AS metadata = %v", as)
 	}
 }

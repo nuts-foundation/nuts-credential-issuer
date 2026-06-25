@@ -38,7 +38,7 @@ authorize_url=$(echo "$start" | python3 -c "import sys,json;print(json.load(sys.
 authorize_url=${authorize_url//$ISSUER_SERVER/$ISSUER_LOCAL}
 
 echo "2. Opening the issuer login page ..."
-login=$(curl -sf "$authorize_url")
+login=$(curl -sfL "$authorize_url") # -L: /authorize redirects to the login page
 session=$(echo "$login" | extract 'name="session" value="[^"]+"' '.*value="([^"]+)".*')
 [ -n "$session" ] || { echo "could not find session on login page"; echo "$login"; exit 1; }
 

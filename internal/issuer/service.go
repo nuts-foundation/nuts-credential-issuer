@@ -19,8 +19,6 @@ type Config struct {
 	IssuerSubject string
 	// ConfigID is the single credential_configuration_id this issuer offers.
 	ConfigID string
-	// CredentialValidity is how long an issued credential is valid for.
-	CredentialValidity time.Duration
 }
 
 // Service orchestrates the issuance use-cases over the domain and the ports. It
@@ -96,7 +94,7 @@ func (s *Service) Issue(ctx context.Context, iss *issuance.Issuance, holderDID s
 		DID:       holderDID,
 		LegalName: iss.Organization().LegalName,
 		Services:  iss.Services(),
-	}, s.cfg.CredentialValidity, s.now())
+	}, s.now())
 
 	vc, err := s.minter.Mint(ctx, cred)
 	if err != nil {

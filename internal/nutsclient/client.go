@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/nuts-foundation/nuts-credential-issuer/internal/credentials"
@@ -28,11 +29,20 @@ func New(baseURL string, httpClient *http.Client) *Client {
 	return &Client{baseURL: baseURL, http: httpClient}
 }
 
+// url joins path elements onto the node base URL, avoiding double-slash footguns.
+func (c *Client) url(elem ...string) string {
+	u, err := url.JoinPath(c.baseURL, elem...)
+	if err != nil {
+		return c.baseURL
+	}
+	return u
+}
+
 // SubjectDID returns the (first) did:web of a Nuts subject, looked up via
 // GET /internal/vdr/v2/subject/{subject}. The issuer uses this to resolve its
 // own issuer DID from a configured subject name, so no DID is hardcoded.
 func (c *Client) SubjectDID(ctx context.Context, subject string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/vdr/v2/subject/"+subject, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url("internal/vdr/v2/subject", subject), nil)
 	if err != nil {
 		return "", err
 	}
@@ -86,7 +96,7 @@ func (c *Client) Mint(ctx context.Context, cred credentials.Credential) (json.Ra
 	if err != nil {
 		return nil, fmt.Errorf("marshal issue request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/vcr/v2/issuer/vc", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url("internal/vcr/v2/issuer/vc"), bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}

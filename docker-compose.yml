@@ -38,16 +38,15 @@ services:
     environment:
       CIS_LISTEN_ADDR: ":8088"
       CIS_TITLE: "Zorg-softwareleverancier Credentialuitgever"
-      # Server-to-server identifier (credential_issuer, token, credential, nonce).
+      # Credential Issuer Identifier and base for token/credential/nonce/authorize.
+      # The demo scripts rewrite this host to localhost for browser-side calls.
       CIS_BASE_URL: "http://issuer:8088"
-      # The one browser-facing URL.
-      CIS_AUTHORIZATION_ENDPOINT: "http://localhost:8088/authorize"
       # Nuts subject the issuer issues from; its DID is resolved from the node at
       # runtime. Create this subject in Nuts Admin (http://localhost:1305).
       CIS_ISSUER_SUBJECT: "issuer"
       CIS_NUTS_NODE_URL: "http://nutsnode:8081"
+      # Demo mode enables the fake eHerkenning login and plain-HTTP did:web resolution.
       CIS_DEMO: "true"
-      CIS_DID_WEB_INSECURE: "true"
       # The node's callback URL uses the internal hostname (NUTS_URL=nutsnode:8080);
       # rewrite it to localhost so a browser can reach it during the interactive demo.
       CIS_BROWSER_CALLBACK_REWRITE: "nutsnode:8080=localhost:8080"

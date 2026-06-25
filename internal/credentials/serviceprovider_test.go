@@ -13,7 +13,6 @@ func TestBuildServiceProviderCredential(t *testing.T) {
 			DID:       "did:web:sp.example.nl",
 			LegalName: "Voorbeeld Dienstverlener B.V.",
 		},
-		24*time.Hour,
 		now,
 	)
 
@@ -26,7 +25,7 @@ func TestBuildServiceProviderCredential(t *testing.T) {
 	if req.Format != "jwt_vc" {
 		t.Errorf("format = %q, want jwt_vc", req.Format)
 	}
-	if req.ExpirationDate != "2026-06-24T12:00:00Z" {
+	if req.ExpirationDate != "2027-06-23T12:00:00Z" { // now + 1 year
 		t.Errorf("expirationDate = %q", req.ExpirationDate)
 	}
 	if len(req.Context) != 2 || req.Context[0] != "https://www.w3.org/2018/credentials/v1" {

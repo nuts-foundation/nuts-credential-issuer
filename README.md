@@ -46,16 +46,15 @@ All variables are namespaced with the `CIS_` (Credential ISsuer) prefix.
 |----------|---------|-------------|
 | `CIS_LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `CIS_TITLE` | `Nuts Credential Issuer` | Issuer display name shown in the UI |
-| `CIS_BASE_URL` | `http://localhost:8080` | Credential Issuer Identifier and base for the token/credential/nonce endpoints (server-to-server) |
-| `CIS_AUTHORIZATION_ENDPOINT` | `<CIS_BASE_URL>/authorize` | The one browser-facing URL. Set separately when the browser and the Nuts node reach the issuer at different hostnames |
+| `CIS_BASE_URL` | `http://localhost:8080` | Credential Issuer Identifier and base for the authorize/token/credential/nonce endpoints |
 | `CIS_ISSUER_SUBJECT` | `issuer` | Nuts subject the issuer issues from; its `did:web` is resolved from the node at runtime. Create it in Nuts Admin |
 | `CIS_NUTS_NODE_URL` | `http://localhost:8081` | Nuts node internal API base URL |
-| `CIS_CREDENTIAL_VALIDITY` | `8760h` | Credential validity duration |
-| `CIS_DEMO` | `false` | Enable the fake eHerkenning authenticator (required — no other authenticator exists yet) |
+| `CIS_DEMO` | `false` | Enable the fake eHerkenning authenticator (required — no other authenticator exists yet). Also allows plain-HTTP `did:web` resolution |
 | `CIS_DEMO_ORG_NAME` | `Voorbeeld Dienstverlener B.V.` | Default legal name in the (editable) demo login |
 | `CIS_DEMO_ORG_IDENTIFIER` | `90000001` | Default KvK/identifier in the (editable) demo login |
-| `CIS_DID_WEB_INSECURE` | `false` | Resolve holder `did:web` over plain HTTP (demo only, requires `CIS_DEMO=true`) |
 | `CIS_BROWSER_CALLBACK_REWRITE` | *(none)* | `from=to` host rewrite for the wallet callback in the browser redirect, when the node's `NUTS_URL` is not browser-reachable (e.g. `nutsnode:8080=localhost:8080`) |
+
+The credential validity is intrinsic to the credential type (1 year), not configurable.
 
 The issuer DID is not configured directly: it is resolved from `CIS_ISSUER_SUBJECT`
 via the Nuts node, so no DID or key material lives in the application. The
@@ -84,8 +83,9 @@ registry — that is intentionally out of scope for v1.
 
 Runs the issuer, a Nuts node (acting as both the issuer's signing node and the
 vendor wallet), and Nuts Admin. No `/etc/hosts` changes are needed: server-to-server
-calls use Docker service names, the one browser-facing URL uses `localhost`, and the
-request script rewrites the node's callback host to `localhost`.
+calls use Docker service names, and the demo scripts rewrite those hosts to
+`localhost` for the browser-side calls (and the issuer rewrites the node's callback
+host for the interactive browser demo).
 
 ```sh
 make up        # start node + admin + issuer

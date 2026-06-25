@@ -3,7 +3,6 @@ module github.com/nuts-foundation/nuts-credential-issuer
 go 1.26.3
 
 require (
-	github.com/knadh/koanf/providers/confmap v1.0.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/lestrrat-go/jwx/v2 v2.1.6

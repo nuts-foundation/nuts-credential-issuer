@@ -28,6 +28,10 @@ var serviceProviderContext = []string{
 // the credential by default. They prefill the (editable) consent screen.
 var DefaultServiceProviderServices = []string{"gbc-client"}
 
+// serviceProviderValidity is how long a ServiceProviderCredential is valid for.
+// It is intrinsic to the credential type.
+const serviceProviderValidity = 365 * 24 * time.Hour
+
 // ServiceProvider describes the subject of a ServiceProviderCredential.
 type ServiceProvider struct {
 	// DID is the service provider's did:web. It comes from the validated
@@ -40,9 +44,9 @@ type ServiceProvider struct {
 }
 
 // BuildServiceProviderCredential assembles a ServiceProviderCredential. The
-// @context is intrinsic to the credential type; services default to
-// DefaultServiceProviderServices when none are given.
-func BuildServiceProviderCredential(issuerDID string, sp ServiceProvider, validity time.Duration, now time.Time) Credential {
+// @context, validity and default services are intrinsic to the credential type;
+// services default to DefaultServiceProviderServices when none are given.
+func BuildServiceProviderCredential(issuerDID string, sp ServiceProvider, now time.Time) Credential {
 	services := sp.Services
 	if len(services) == 0 {
 		services = DefaultServiceProviderServices
@@ -57,7 +61,7 @@ func BuildServiceProviderCredential(issuerDID string, sp ServiceProvider, validi
 			"name":     sp.LegalName,
 			"services": services,
 		},
-		ExpirationDate: now.Add(validity).UTC().Format(time.RFC3339),
+		ExpirationDate: now.Add(serviceProviderValidity).UTC().Format(time.RFC3339),
 		Format:         "jwt_vc",
 	}
 }
